@@ -1,0 +1,1706 @@
+import sys
+import os
+import re
+from datetime import datetime
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QTextEdit, 
+                             QMenuBar, QMenu, QAction, QFileDialog, QMessageBox,
+                             QStatusBar, QLabel, QFontDialog, QColorDialog,
+                             QDialog, QVBoxLayout, QLineEdit, QPushButton,
+                             QCheckBox, QGroupBox, QHBoxLayout, QRadioButton,
+                             QButtonGroup, QWidget, QHBoxLayout, QListWidget,
+                             QListWidgetItem, QAbstractItemView, QTabWidget)
+from PyQt5.QtCore import Qt, QTimer, QRect, QPoint, QSettings
+from PyQt5.QtGui import (QFont, QColor, QTextCursor, QKeySequence, QIcon, 
+                         QTextDocument, QPainter, QTextFormat, QCursor,
+                         QTextCharFormat)
+
+
+try:
+    import winreg
+    HAS_WINREG = True
+except ImportError:
+    HAS_WINREG = False
+
+
+# ============================================================
+# CONTEXT MENU REGISTRATION
+# ============================================================
+
+def is_registered(exe_path):
+    if not HAS_WINREG:
+        return False
+    try:
+        key_path = r"Software\Classes\*\shell\coding-pad\command"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            value, _ = winreg.QueryValueEx(key, "")
+            return exe_path.lower() in value.lower()
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+
+def register_context_menu(exe_path):
+    if not HAS_WINREG:
+        return False
+    
+    registry_entries = [
+        (r"*\shell\coding-pad", "Open with coding-pad", exe_path, f'"{exe_path}" "%1"'),
+        (r"Directory\shell\coding-pad", "Open with coding-pad", exe_path, f'"{exe_path}" "%1"'),
+        (r"Directory\Background\shell\coding-pad", "Open with coding-pad", exe_path, f'"{exe_path}" "%V"'),
+    ]
+    
+    base_key = winreg.HKEY_CURRENT_USER
+    success = True
+    
+    for key_path, menu_text, icon_path, command in registry_entries:
+        try:
+            full_key_path = r"Software\Classes\\" + key_path
+            with winreg.CreateKeyEx(base_key, full_key_path, 0, winreg.KEY_WRITE) as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, menu_text)
+                winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, icon_path)
+            command_key_path = full_key_path + r"\command"
+            with winreg.CreateKeyEx(base_key, command_key_path, 0, winreg.KEY_WRITE) as cmd_key:
+                winreg.SetValueEx(cmd_key, "", 0, winreg.REG_SZ, command)
+        except Exception:
+            success = False
+    
+    return success
+
+
+def unregister_context_menu():
+    if not HAS_WINREG:
+        return False
+    
+    registry_entries = [
+        r"*\shell\coding-pad",
+        r"Directory\shell\coding-pad",
+        r"Directory\Background\shell\coding-pad",
+    ]
+    
+    base_key = winreg.HKEY_CURRENT_USER
+    
+    for key_path in registry_entries:
+        try:
+            full_key_path = r"Software\Classes\\" + key_path
+            try:
+                winreg.DeleteKey(base_key, full_key_path + r"\command")
+            except FileNotFoundError:
+                pass
+            winreg.DeleteKey(base_key, full_key_path)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Failed to unregister {key_path}: {e}")
+    
+    return True
+
+
+def auto_register_context_menu():
+    if not getattr(sys, 'frozen', False):
+        return
+    if not HAS_WINREG:
+        return
+    exe_path = sys.executable
+    if not is_registered(exe_path):
+        print(f"Registering context menu for: {exe_path}")
+        register_context_menu(exe_path)
+
+
+# ============================================================
+# LINE NUMBER AREA
+# ============================================================
+
+class LineNumberArea(QWidget):
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.editor = editor
+        self.setFixedWidth(50)
+        
+    def sizeHint(self):
+        return self.size()
+        
+    def paintEvent(self, event):
+        self.editor.line_number_area_paint(event)
+
+
+# ============================================================
+# AUTO SCROLL ANCHOR
+# ============================================================
+
+class AutoScrollAnchor(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setFixedSize(40, 40)
+        self.hide()
+        self.anchor_color = QColor(80, 80, 80, 200)
+        self.arrow_color = QColor(255, 255, 255)
+        self.direction = 0
+        self.speed = 0.0
+    
+    def set_direction(self, direction, speed):
+        self.direction = direction
+        self.speed = speed
+        self.update()
+    
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(self.anchor_color)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(0, 0, 40, 40)
+        painter.setBrush(self.arrow_color)
+        center_x = 20
+        center_y = 20
+        if self.direction == -1:
+            points = [QPoint(center_x, center_y - 10),
+                     QPoint(center_x - 6, center_y - 2),
+                     QPoint(center_x + 6, center_y - 2)]
+            painter.drawPolygon(*points)
+        elif self.direction == 1:
+            points = [QPoint(center_x, center_y + 10),
+                     QPoint(center_x - 6, center_y + 2),
+                     QPoint(center_x + 6, center_y + 2)]
+            painter.drawPolygon(*points)
+        else:
+            painter.drawEllipse(center_x - 4, center_y - 4, 8, 8)
+
+
+# ============================================================
+# CODE EDITOR
+# ============================================================
+
+class CodeEditor(QTextEdit):
+    def __init__(self, parent=None, dark_mode=False):
+        super().__init__(parent)
+        self.line_number_area = LineNumberArea(self)
+        
+        self.font_family = "Consolas"
+        self.font_size = 14
+        
+        font = QFont(self.font_family, self.font_size)
+        self.setFont(font)
+        self.document().setDefaultFont(font)
+        self.setFontPointSize(self.font_size)
+        
+        self.dark_mode = dark_mode
+        self.setViewportMargins(50, 0, 0, 0)
+        self.setLineWrapMode(QTextEdit.NoWrap)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        self.auto_scroll_active = False
+        self.auto_scroll_anchor = None
+        self.auto_scroll_timer = QTimer()
+        self.auto_scroll_timer.timeout.connect(self._auto_scroll_step)
+        self.auto_scroll_anchor_widget = AutoScrollAnchor(self)
+        self.setMouseTracking(True)
+        
+        self.update_colors()
+        
+        self.cursorPositionChanged.connect(self.update_line_number_area)
+        self.textChanged.connect(self.update_line_number_area)
+        self.verticalScrollBar().valueChanged.connect(self.update_line_number_area)
+        
+        self.installEventFilter(self)
+        self.update_line_number_area()
+    
+    def apply_font(self):
+        font = QFont(self.font_family, self.font_size)
+        self.setFont(font)
+        self.document().setDefaultFont(font)
+        self.setFontPointSize(self.font_size)
+        char_format = QTextCharFormat()
+        char_format.setFontFamily(self.font_family)
+        char_format.setFontPointSize(self.font_size)
+        self.setCurrentCharFormat(char_format)
+    
+    def update_colors(self):
+        if self.dark_mode:
+            self.text_color = QColor(220, 220, 220)
+            self.bg_color = QColor(30, 30, 30)
+            self.line_number_bg = QColor(40, 40, 40)
+            self.line_number_fg = QColor(100, 100, 100)
+        else:
+            self.text_color = QColor(0, 0, 0)
+            self.bg_color = QColor(255, 255, 255)
+            self.line_number_bg = QColor(240, 240, 240)
+            self.line_number_fg = QColor(128, 128, 128)
+        
+        palette = self.palette()
+        palette.setColor(palette.Base, self.bg_color)
+        palette.setColor(palette.Text, self.text_color)
+        self.setPalette(palette)
+        
+        self.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {self.bg_color.name()};
+                color: {self.text_color.name()};
+                border: none;
+                font-family: {self.font_family};
+                font-size: {self.font_size}pt;
+            }}
+        """)
+        
+        self.viewport().update()
+        self.line_number_area.update()
+    
+    def toggle_dark_mode(self, dark_mode):
+        self.dark_mode = dark_mode
+        self.update_colors()
+    
+    # AUTO-SCROLL
+    def start_auto_scroll(self, pos):
+        self.auto_scroll_active = True
+        self.auto_scroll_anchor = pos
+        self.auto_scroll_anchor_widget.move(pos.x() - 20, pos.y() - 20)
+        self.auto_scroll_anchor_widget.set_direction(0, 0)
+        self.auto_scroll_anchor_widget.show()
+        self.auto_scroll_anchor_widget.raise_()
+        self.auto_scroll_timer.start(16)
+
+    def stop_auto_scroll(self):
+        self.auto_scroll_active = False
+        self.auto_scroll_anchor = None
+        self.auto_scroll_timer.stop()
+        self.auto_scroll_anchor_widget.hide()
+
+    def _auto_scroll_step(self):
+        if not self.auto_scroll_active or self.auto_scroll_anchor is None:
+            return
+        
+        global_pos = QCursor.pos()
+        local_pos = self.viewport().mapFromGlobal(global_pos)
+        dy = local_pos.y() - self.auto_scroll_anchor.y()
+        DEAD_ZONE = 5
+        
+        if abs(dy) < DEAD_ZONE:
+            self.auto_scroll_anchor_widget.set_direction(0, 0)
+            return
+        
+        MAX_DISTANCE = 100
+        MAX_SPEED = 40
+        
+        distance = abs(dy) - DEAD_ZONE
+        speed_ratio = min(distance / MAX_DISTANCE, 1.0)
+        speed = int(speed_ratio * MAX_SPEED) + 2
+        
+        if dy < 0:
+            direction = -1
+            self.auto_scroll_anchor_widget.set_direction(-1, speed_ratio)
+        else:
+            direction = 1
+            self.auto_scroll_anchor_widget.set_direction(1, speed_ratio)
+        
+        scrollbar = self.verticalScrollBar()
+        scrollbar.setValue(scrollbar.value() + direction * speed)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MiddleButton:
+            if self.auto_scroll_active:
+                self.stop_auto_scroll()
+            else:
+                viewport_pos = self.viewport().mapFrom(self, event.pos())
+                self.start_auto_scroll(viewport_pos)
+            event.accept()
+            return
+        elif event.button() == Qt.LeftButton and self.auto_scroll_active:
+            self.stop_auto_scroll()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+    
+    def keyPressEvent(self, event):
+        if self.auto_scroll_active:
+            self.stop_auto_scroll()
+        super().keyPressEvent(event)
+    
+    def wheelEvent(self, event):
+        if self.auto_scroll_active:
+            self.stop_auto_scroll()
+        super().wheelEvent(event)
+    
+    # INDENT / UNINDENT
+    def indent_selection(self):
+        cursor = self.textCursor()
+        original_pos = cursor.position()
+        has_selection = cursor.hasSelection()
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        
+        cursor.setPosition(start)
+        cursor.movePosition(QTextCursor.StartOfLine)
+        start_line_pos = cursor.position()
+        
+        cursor.setPosition(end)
+        if cursor.atBlockStart() and end != start:
+            cursor.movePosition(QTextCursor.Left)
+        cursor.movePosition(QTextCursor.EndOfLine)
+        end_line_pos = cursor.position()
+        
+        cursor.setPosition(start_line_pos)
+        cursor.setPosition(end_line_pos, QTextCursor.KeepAnchor)
+        selected_text = cursor.selectedText()
+        
+        lines = selected_text.split('\u2029')
+        new_lines = ['    ' + line if line.strip() else line for line in lines]
+        new_text = '\u2029'.join(new_lines)
+        
+        cursor.setPosition(start_line_pos)
+        cursor.setPosition(end_line_pos, QTextCursor.KeepAnchor)
+        cursor.insertText(new_text)
+        
+        doc_length = self.document().characterCount() - 1
+        
+        if has_selection:
+            new_end = start_line_pos + len(new_text)
+            new_end = min(new_end, doc_length)
+            cursor.setPosition(min(start_line_pos, doc_length))
+            cursor.setPosition(new_end, QTextCursor.KeepAnchor)
+        else:
+            new_pos = original_pos + 4
+            new_pos = min(new_pos, doc_length)
+            cursor.setPosition(new_pos)
+        
+        self.setTextCursor(cursor)
+
+    def unindent_selection(self):
+        cursor = self.textCursor()
+        original_pos = cursor.position()
+        has_selection = cursor.hasSelection()
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        
+        cursor.setPosition(start)
+        cursor.movePosition(QTextCursor.StartOfLine)
+        start_line_pos = cursor.position()
+        
+        cursor.setPosition(end)
+        if cursor.atBlockStart() and end != start:
+            cursor.movePosition(QTextCursor.Left)
+        cursor.movePosition(QTextCursor.EndOfLine)
+        end_line_pos = cursor.position()
+        
+        cursor.setPosition(start_line_pos)
+        cursor.setPosition(end_line_pos, QTextCursor.KeepAnchor)
+        selected_text = cursor.selectedText()
+        
+        lines = selected_text.split('\u2029')
+        new_lines = []
+        total_removed = 0
+        for line in lines:
+            removed = 0
+            new_line = line
+            while removed < 4 and new_line.startswith(' '):
+                new_line = new_line[1:]
+                removed += 1
+            total_removed += removed
+            new_lines.append(new_line)
+        
+        new_text = '\u2029'.join(new_lines)
+        
+        cursor.setPosition(start_line_pos)
+        cursor.setPosition(end_line_pos, QTextCursor.KeepAnchor)
+        cursor.insertText(new_text)
+        
+        doc_length = self.document().characterCount() - 1
+        
+        if has_selection:
+            new_end = start_line_pos + len(new_text)
+            new_end = min(new_end, doc_length)
+            cursor.setPosition(min(start_line_pos, doc_length))
+            cursor.setPosition(new_end, QTextCursor.KeepAnchor)
+        else:
+            new_pos = original_pos - total_removed
+            new_pos = max(start_line_pos, new_pos)
+            new_pos = min(new_pos, doc_length)
+            cursor.setPosition(new_pos)
+        
+        self.setTextCursor(cursor)
+    
+    # COMMENT/UNCOMMENT
+    def toggle_comment(self):
+        cursor = self.textCursor()
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        
+        cursor.setPosition(start)
+        cursor.movePosition(QTextCursor.StartOfLine)
+        start_line_pos = cursor.position()
+        
+        cursor.setPosition(end)
+        if cursor.atBlockStart() and end != start:
+            cursor.movePosition(QTextCursor.Left)
+        cursor.movePosition(QTextCursor.EndOfLine)
+        end_line_pos = cursor.position()
+        
+        cursor.setPosition(start_line_pos)
+        cursor.setPosition(end_line_pos, QTextCursor.KeepAnchor)
+        selected_text = cursor.selectedText()
+        lines = selected_text.split('\u2029')
+        
+        all_commented = True
+        has_content = False
+        for line in lines:
+            stripped = line.lstrip()
+            if not stripped:
+                continue
+            has_content = True
+            if not stripped.startswith('#'):
+                all_commented = False
+                break
+        
+        if not has_content:
+            return
+        
+        new_lines = []
+        for line in lines:
+            if all_commented:
+                stripped = line.lstrip()
+                indent = len(line) - len(stripped)
+                if stripped.startswith('# '):
+                    new_line = line[:indent] + stripped[2:]
+                elif stripped.startswith('#'):
+                    new_line = line[:indent] + stripped[1:]
+                else:
+                    new_line = line
+            else:
+                if line.strip():
+                    stripped = line.lstrip()
+                    indent = len(line) - len(stripped)
+                    new_line = line[:indent] + '# ' + stripped
+                else:
+                    new_line = line
+            new_lines.append(new_line)
+        
+        new_text = '\u2029'.join(new_lines)
+        
+        cursor.setPosition(start_line_pos)
+        cursor.setPosition(end_line_pos, QTextCursor.KeepAnchor)
+        cursor.insertText(new_text)
+        
+        cursor.setPosition(start_line_pos)
+        cursor.setPosition(start_line_pos + len(new_text), QTextCursor.KeepAnchor)
+        self.setTextCursor(cursor)
+    
+    # BRACKET MATCHING
+    def get_bracket_at_cursor(self):
+        cursor = self.textCursor()
+        pos = cursor.position()
+        text = self.document().toPlainText()
+        brackets = {'(': ')', '[': ']', '{': '}', '<': '>', '"': '"', "'": "'"}
+        
+        if pos > 0 and pos < len(text):
+            char_left = text[pos - 1]
+            char_right = text[pos]
+            if char_left in brackets:
+                expected_close = brackets[char_left]
+                if char_right == expected_close:
+                    return (pos - 1, pos, char_left, char_right)
+        return None
+        
+    def delete_bracket_pair(self):
+        bracket_info = self.get_bracket_at_cursor()
+        if bracket_info:
+            start_pos, end_pos, open_char, close_char = bracket_info
+            cursor = self.textCursor()
+            cursor.setPosition(start_pos)
+            cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, end_pos - start_pos + 1)
+            cursor.removeSelectedText()
+            return True
+        return False
+        
+    def eventFilter(self, obj, event):
+        if event.type() == event.KeyPress:
+            if event.key() == Qt.Key_Tab:
+                cursor = self.textCursor()
+                if cursor.hasSelection():
+                    self.indent_selection()
+                else:
+                    cursor.movePosition(QTextCursor.StartOfLine)
+                    cursor.movePosition(QTextCursor.EndOfLine, QTextCursor.KeepAnchor)
+                    line_text = cursor.selectedText()
+                    current_cursor = self.textCursor()
+                    pos_in_line = current_cursor.position() - current_cursor.block().position()
+                    
+                    leading_spaces = 0
+                    for char in line_text:
+                        if char == ' ':
+                            leading_spaces += 1
+                        else:
+                            break
+                    
+                    if pos_in_line <= leading_spaces:
+                        self.indent_selection()
+                    else:
+                        current_cursor.insertText('    ')
+                        self.setTextCursor(current_cursor)
+                return True
+            
+            if event.key() == Qt.Key_Backtab:
+                self.unindent_selection()
+                return True
+            
+            if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+                self.handle_enter_key()
+                return True
+            
+            if event.key() == Qt.Key_Backspace or event.key() == Qt.Key_Delete:
+                if self.delete_bracket_pair():
+                    return True
+            
+            if self.handle_bracket_smart(event):
+                return True
+        return super().eventFilter(obj, event)
+    
+    def handle_bracket_smart(self, event):
+        open_brackets = {
+            Qt.Key_ParenLeft: ('(', ')'),
+            Qt.Key_BraceLeft: ('{', '}'),
+            Qt.Key_BracketLeft: ('[', ']'),
+            Qt.Key_Less: ('<', '>'),
+        }
+        smart_quotes = {
+            Qt.Key_QuoteDbl: '"',
+            Qt.Key_Apostrophe: "'",
+        }
+        close_brackets = {
+            Qt.Key_ParenRight: ')',
+            Qt.Key_BraceRight: '}',
+            Qt.Key_BracketRight: ']',
+            Qt.Key_Greater: '>',
+        }
+        
+        cursor = self.textCursor()
+        pos = cursor.position()
+        text = self.document().toPlainText()
+        
+        if event.key() in close_brackets:
+            close_char = close_brackets[event.key()]
+            if pos < len(text) and text[pos] == close_char:
+                cursor.movePosition(QTextCursor.Right)
+                self.setTextCursor(cursor)
+                return True
+        
+        if event.key() in smart_quotes:
+            quote_char = smart_quotes[event.key()]
+            if pos < len(text) and text[pos] == quote_char:
+                cursor.movePosition(QTextCursor.Right)
+                self.setTextCursor(cursor)
+                return True
+            
+            cursor.movePosition(QTextCursor.StartOfLine)
+            cursor.movePosition(QTextCursor.EndOfLine, QTextCursor.KeepAnchor)
+            line_text = cursor.selectedText()
+            quote_count = line_text.count(quote_char)
+            
+            if quote_count % 2 == 1:
+                cursor = self.textCursor()
+                cursor.insertText(quote_char)
+                self.setTextCursor(cursor)
+                return True
+            else:
+                cursor = self.textCursor()
+                cursor.insertText(quote_char + quote_char)
+                cursor.movePosition(QTextCursor.Left)
+                self.setTextCursor(cursor)
+                return True
+        
+        if event.key() in open_brackets:
+            open_char, close_char = open_brackets[event.key()]
+            cursor = self.textCursor()
+            cursor.insertText(open_char + close_char)
+            cursor.movePosition(QTextCursor.Left)
+            self.setTextCursor(cursor)
+            return True
+        return False
+    
+    def handle_enter_key(self):
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.StartOfLine)
+        cursor.movePosition(QTextCursor.EndOfLine, QTextCursor.KeepAnchor)
+        current_line = cursor.selectedText()
+        
+        indent_spaces = 0
+        for char in current_line:
+            if char == ' ':
+                indent_spaces += 1
+            else:
+                break
+        
+        needs_extra_indent = current_line.rstrip().endswith(':')
+        
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.EndOfLine)
+        self.setTextCursor(cursor)
+        cursor.insertText('\n')
+        
+        if indent_spaces > 0:
+            cursor.insertText(' ' * indent_spaces)
+        if needs_extra_indent:
+            cursor.insertText(' ' * 4)
+        
+        self.setTextCursor(cursor)
+        
+    def line_number_area_paint(self, event):
+        painter = QPainter(self.line_number_area)
+        painter.fillRect(event.rect(), self.line_number_bg)
+        
+        block = self.document().begin()
+        block_number = 1
+        font_metrics = painter.fontMetrics()
+        content_height = self.viewport().height()
+        scroll_value = self.verticalScrollBar().value()
+        
+        painter.setPen(self.line_number_fg)
+        
+        while block.isValid():
+            block_rect = self.document().documentLayout().blockBoundingRect(block)
+            y = block_rect.top() - scroll_value
+            
+            if y > -50 and y < content_height + 50:
+                block_height = block_rect.height()
+                text_y = int(y + (block_height - font_metrics.height()) / 2 + font_metrics.ascent())
+                painter.drawText(5, text_y, str(block_number))
+            elif y > content_height + 50:
+                break
+            block = block.next()
+            block_number += 1
+    
+    def update_line_number_area(self):
+        self.line_number_area.update()
+        
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        cr = self.contentsRect()
+        self.line_number_area.setGeometry(QRect(cr.left(), cr.top(), 50, cr.height()))
+        
+    def scrollContentsBy(self, dx, dy):
+        super().scrollContentsBy(dx, dy)
+        self.line_number_area.update()
+
+
+# ============================================================
+# EDITOR TAB
+# ============================================================
+
+class EditorTab:
+    def __init__(self, editor, file_path=None, is_modified=False):
+        self.editor = editor
+        self.file_path = file_path
+        self.is_modified = is_modified
+        self.original_content = ""
+    
+    def get_display_name(self):
+        if self.file_path:
+            name = os.path.basename(self.file_path)
+        else:
+            name = "Untitled"
+        if self.is_modified:
+            name += " *"
+        return name
+    
+    def get_tooltip(self):
+        if self.file_path:
+            return self.file_path
+        return "Unsaved file"
+
+
+# ============================================================
+# TAB WIDGET
+# ============================================================
+
+class CustomTabWidget(QTabWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_notepad = parent
+        self.setTabsClosable(True)
+        self.setMovable(True)
+        self.setDocumentMode(True)
+        self.tabCloseRequested.connect(self.on_tab_close_requested)
+    
+    def on_tab_close_requested(self, index):
+        if self.parent_notepad:
+            self.parent_notepad.close_tab(index)
+
+
+# ============================================================
+# MAIN NOTEPAD
+# ============================================================
+
+class MyNotepad(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("coding-puddle.exe")
+        self.setGeometry(100, 100, 1000, 800)
+        
+        self.dark_mode = False
+        self.font_family = "Consolas"
+        self.font_size = 14
+        self.tabs = []
+        
+        self.dragging_tab = False
+        self.drag_start_pos = None
+        self.drag_tab_index = -1
+        
+        self.tab_widget = CustomTabWidget(self)
+        self.setCentralWidget(self.tab_widget)
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
+        self.tab_widget.tabBar().installEventFilter(self)
+        self.tab_widget.tabBar().setMouseTracking(True)
+        
+        self.create_status_bar()
+        self.create_menu_bar()
+        self.add_new_tab()
+        
+        self.find_dialog = None
+        self.replace_dialog = None
+        
+        self.apply_theme()
+        self.apply_font()
+        self.update_title()
+        self.load_settings()
+    
+    def eventFilter(self, obj, event):
+        if obj != self.tab_widget.tabBar():
+            return super().eventFilter(obj, event)
+        
+        if event.type() == event.MouseButtonPress:
+            if event.button() == Qt.LeftButton:
+                self.drag_start_pos = event.pos()
+                self.drag_tab_index = self.tab_widget.tabBar().tabAt(event.pos())
+                self.dragging_tab = False
+        elif event.type() == event.MouseMove:
+            if self.drag_start_pos is not None and event.buttons() & Qt.LeftButton:
+                if self.drag_tab_index >= 0:
+                    if not self.tab_widget.tabBar().rect().contains(event.pos()):
+                        if not self.dragging_tab:
+                            self.dragging_tab = True
+                            self.tab_widget.tabBar().setCursor(Qt.DragMoveCursor)
+        elif event.type() == event.MouseButtonRelease:
+            if event.button() == Qt.LeftButton:
+                if self.dragging_tab and self.drag_tab_index >= 0:
+                    self.detach_tab(self.drag_tab_index)
+                self.dragging_tab = False
+                self.drag_start_pos = None
+                self.drag_tab_index = -1
+                self.tab_widget.tabBar().setCursor(Qt.ArrowCursor)
+        return super().eventFilter(obj, event)
+    
+    def detach_tab(self, index):
+        if index < 0 or index >= len(self.tabs):
+            return
+        if len(self.tabs) <= 1:
+            return
+        
+        tab = self.tabs[index]
+        content = tab.editor.toPlainText()
+        file_path = tab.file_path
+        is_modified = tab.is_modified
+        original_content = tab.original_content
+        
+        self.tab_widget.removeTab(index)
+        self.tabs.pop(index)
+        self.update_title()
+        
+        new_window = MyNotepad()
+        if len(new_window.tabs) > 0:
+            new_window.tab_widget.removeTab(0)
+            new_window.tabs.pop(0)
+        
+        new_tab = new_window.add_new_tab(file_path, content)
+        if is_modified:
+            new_tab.is_modified = True
+            new_tab.original_content = original_content
+            new_window.update_tab_title(0)
+            new_window.update_title()
+        else:
+            new_tab.original_content = original_content
+        
+        new_window.dark_mode = self.dark_mode
+        for t in new_window.tabs:
+            t.editor.toggle_dark_mode(self.dark_mode)
+        new_window.apply_theme()
+        new_window.apply_font()
+        new_window.show()
+    
+    def load_settings(self):
+        settings = QSettings("coding-pad", "coding-pad")
+        geometry = settings.value("geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        state = settings.value("windowState")
+        if state:
+            self.restoreState(state)
+        dark_mode = settings.value("dark_mode", False, type=bool)
+        if dark_mode:
+            self.dark_mode = True
+            for tab in self.tabs:
+                tab.editor.dark_mode = True
+                tab.editor.update_colors()
+            self.apply_theme()
+            if hasattr(self, 'dark_mode_action'):
+                self.dark_mode_action.setChecked(True)
+    
+    def save_settings(self):
+        settings = QSettings("coding-pad", "coding-pad")
+        settings.setValue("geometry", self.saveGeometry())
+        settings.setValue("windowState", self.saveState())
+        settings.setValue("dark_mode", self.dark_mode)
+    
+    def current_editor(self):
+        return self.tab_widget.currentWidget()
+    
+    def current_tab(self):
+        index = self.tab_widget.currentIndex()
+        if 0 <= index < len(self.tabs):
+            return self.tabs[index]
+        return None
+    
+    def add_new_tab(self, file_path=None, content=None):
+        editor = CodeEditor(self, self.dark_mode)
+        editor.font_family = self.font_family
+        editor.font_size = self.font_size
+        editor.apply_font()
+        
+        editor.cursorPositionChanged.connect(self.update_cursor_position)
+        editor.textChanged.connect(self.on_text_changed)
+        
+        tab = EditorTab(editor, file_path, False)
+        
+        if content is not None:
+            editor.blockSignals(True)
+            editor.setText(content)
+            editor.blockSignals(False)
+            editor.apply_font()
+            tab.original_content = content
+        else:
+            tab.original_content = ""
+        
+        self.tabs.append(tab)
+        index = self.tab_widget.addTab(editor, tab.get_display_name())
+        self.tab_widget.setTabToolTip(index, tab.get_tooltip())
+        self.tab_widget.setCurrentIndex(index)
+        return tab
+    
+    def on_tab_changed(self, index):
+        if 0 <= index < len(self.tabs):
+            self.update_cursor_position()
+            self.update_title()
+    
+    def update_tab_title(self, index=None):
+        if index is None:
+            index = self.tab_widget.currentIndex()
+        if 0 <= index < len(self.tabs):
+            tab = self.tabs[index]
+            self.tab_widget.setTabText(index, tab.get_display_name())
+            self.tab_widget.setTabToolTip(index, tab.get_tooltip())
+    
+    def close_tab(self, index):
+        if index < 0 or index >= len(self.tabs):
+            return
+        tab = self.tabs[index]
+        if tab.is_modified:
+            self.tab_widget.setCurrentIndex(index)
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                f"Do you want to save changes to {tab.get_display_name().rstrip(' *')}?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
+            )
+            if reply == QMessageBox.Save:
+                if not self.save_tab(index):
+                    return
+            elif reply == QMessageBox.Cancel:
+                return
+        self.tab_widget.removeTab(index)
+        self.tabs.pop(index)
+        if len(self.tabs) == 0:
+            self.add_new_tab()
+        self.update_title()
+    
+    def next_tab(self):
+        count = self.tab_widget.count()
+        if count > 1:
+            index = (self.tab_widget.currentIndex() + 1) % count
+            self.tab_widget.setCurrentIndex(index)
+    
+    def prev_tab(self):
+        count = self.tab_widget.count()
+        if count > 1:
+            index = (self.tab_widget.currentIndex() - 1) % count
+            self.tab_widget.setCurrentIndex(index)
+    
+    def save_tab(self, index):
+        if index < 0 or index >= len(self.tabs):
+            return False
+        tab = self.tabs[index]
+        if tab.file_path:
+            try:
+                content = tab.editor.toPlainText()
+                with open(tab.file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                tab.is_modified = False
+                tab.original_content = content
+                self.update_tab_title(index)
+                self.update_title()
+                return True
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not save file: {str(e)}")
+                return False
+        else:
+            return self.save_tab_as(index)
+    
+    def save_tab_as(self, index):
+        if index < 0 or index >= len(self.tabs):
+            return False
+        tab = self.tabs[index]
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save File", "",
+            "Python Files (*.py);;Text Files (*.txt);;All Files (*)"
+        )
+        if file_path:
+            try:
+                content = tab.editor.toPlainText()
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                tab.file_path = file_path
+                tab.is_modified = False
+                tab.original_content = content
+                self.update_tab_title(index)
+                self.update_title()
+                return True
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not save file: {str(e)}")
+                return False
+        return False
+    
+    def on_text_changed(self):
+        tab = self.current_tab()
+        if not tab:
+            return
+        current_content = tab.editor.toPlainText()
+        is_modified = (current_content != tab.original_content)
+        if is_modified != tab.is_modified:
+            tab.is_modified = is_modified
+            self.update_tab_title()
+            self.update_title()
+    
+    def update_title(self):
+        base_title = "coding-puddle.exe"
+        tab = self.current_tab()
+        if tab:
+            if tab.file_path:
+                filename = os.path.basename(tab.file_path)
+                if tab.is_modified:
+                    self.setWindowTitle(f"{base_title} - {filename} *")
+                else:
+                    self.setWindowTitle(f"{base_title} - {filename}")
+            else:
+                if tab.is_modified:
+                    self.setWindowTitle(f"{base_title} *")
+                else:
+                    self.setWindowTitle(base_title)
+        else:
+            self.setWindowTitle(base_title)
+    
+    def update_cursor_position(self):
+        editor = self.current_editor()
+        if not editor:
+            return
+        cursor = editor.textCursor()
+        position = cursor.position()
+        text = editor.toPlainText()
+        text_before = text[:position]
+        
+        line_number = text_before.count('\n') + 1
+        last_newline = text_before.rfind('\n')
+        if last_newline == -1:
+            column_number = position + 1
+        else:
+            column_number = position - last_newline
+        
+        self.position_label.setText(f"Ln {line_number}, Col {column_number}")
+        
+        if text:
+            if text.endswith('\r\n'):
+                self.line_ending_label.setText("Windows (CRLF)")
+            elif text.endswith('\n'):
+                self.line_ending_label.setText("Unix (LF)")
+            elif text.endswith('\r'):
+                self.line_ending_label.setText("Macintosh (CR)")
+            else:
+                self.line_ending_label.setText("None")
+    
+    def apply_theme(self):
+        if self.dark_mode:
+            self.setStyleSheet("""
+                QMainWindow { background-color: #1e1e1e; }
+                QMenuBar { background-color: #2d2d2d; color: #d4d4d4; }
+                QMenuBar::item { background-color: #2d2d2d; color: #d4d4d4; }
+                QMenuBar::item:selected { background-color: #3d3d3d; color: white; }
+                QMenu { background-color: #2d2d2d; color: #d4d4d4; border: 1px solid #3d3d3d; }
+                QMenu::item:selected { background-color: #3d3d3d; color: white; }
+                QStatusBar { background-color: #2d2d2d; color: #d4d4d4; }
+                QLabel { color: #d4d4d4; }
+                QDialog { background-color: #2d2d2d; color: #d4d4d4; }
+                QLineEdit { background-color: #3d3d3d; color: #d4d4d4; border: 1px solid #4d4d4d; padding: 3px; }
+                QPushButton { background-color: #3d3d3d; color: #d4d4d4; border: 1px solid #4d4d4d; padding: 5px 10px; }
+                QPushButton:hover { background-color: #4d4d4d; }
+                QCheckBox { color: #d4d4d4; }
+                QGroupBox { color: #d4d4d4; border: 1px solid #4d4d4d; }
+                QTabWidget::pane { border: none; background-color: #1e1e1e; }
+                QTabBar::tab { background-color: #2d2d2d; color: #d4d4d4; padding: 6px 12px; border: 1px solid #3d3d3d; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
+                QTabBar::tab:selected { background-color: #1e1e1e; color: white; }
+                QTabBar::tab:hover { background-color: #3d3d3d; }
+            """)
+        else:
+            self.setStyleSheet("""
+                QMainWindow { background-color: #f0f0f0; }
+                QMenuBar { background-color: #f0f0f0; color: black; }
+                QMenuBar::item:selected { background-color: #e0e0e0; }
+                QMenu { background-color: white; color: black; }
+                QMenu::item:selected { background-color: #e0e0e0; }
+                QStatusBar { background-color: #f0f0f0; color: black; }
+                QLabel { color: black; }
+                QDialog { background-color: white; color: black; }
+                QLineEdit { background-color: white; color: black; border: 1px solid #ccc; padding: 3px; }
+                QPushButton { background-color: #f0f0f0; color: black; border: 1px solid #ccc; padding: 5px 10px; }
+                QPushButton:hover { background-color: #e0e0e0; }
+                QCheckBox { color: black; }
+                QGroupBox { color: black; border: 1px solid #ccc; }
+                QTabWidget::pane { border: none; background-color: white; }
+                QTabBar::tab { background-color: #e0e0e0; color: black; padding: 6px 12px; border: 1px solid #ccc; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
+                QTabBar::tab:selected { background-color: white; color: black; }
+                QTabBar::tab:hover { background-color: #f0f0f0; }
+            """)
+        self.update_status_bar_style()
+    
+    def update_status_bar_style(self):
+        if self.dark_mode:
+            self.status_bar.setStyleSheet("""
+                QStatusBar { padding: 6px 0px; font-size: 11pt; background-color: #2d2d2d; color: #d4d4d4; }
+                QLabel { color: #d4d4d4; }
+            """)
+        else:
+            self.status_bar.setStyleSheet("""
+                QStatusBar { padding: 6px 0px; font-size: 11pt; background-color: #f0f0f0; color: black; }
+                QLabel { color: black; }
+            """)
+    
+    def apply_font(self):
+        for tab in self.tabs:
+            tab.editor.font_family = self.font_family
+            tab.editor.font_size = self.font_size
+            tab.editor.apply_font()
+    
+    def create_status_bar(self):
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        
+        self.position_label = QLabel("Ln 1, Col 1")
+        self.position_label.setStyleSheet("padding: 0px 15px;")
+        self.status_bar.addPermanentWidget(self.position_label)
+        
+        self.encoding_label = QLabel("UTF-8")
+        self.encoding_label.setStyleSheet("padding: 0px 15px;")
+        self.status_bar.addPermanentWidget(self.encoding_label)
+        
+        self.line_ending_label = QLabel("Windows (CRLF)")
+        self.line_ending_label.setStyleSheet("padding: 0px 15px;")
+        self.status_bar.addPermanentWidget(self.line_ending_label)
+        
+        self.update_status_bar_style()
+    
+    def create_menu_bar(self):
+        menu_bar = self.menuBar()
+        
+        # FILE
+        file_menu = menu_bar.addMenu("File")
+        
+        new_action = QAction("New", self)
+        new_action.setShortcut("Ctrl+N")
+        new_action.triggered.connect(self.new_file)
+        file_menu.addAction(new_action)
+        
+        new_tab_action = QAction("New Tab", self)
+        new_tab_action.setShortcut("Ctrl+T")
+        new_tab_action.triggered.connect(self.new_file)
+        file_menu.addAction(new_tab_action)
+        
+        open_action = QAction("Open...", self)
+        open_action.setShortcut("Ctrl+O")
+        open_action.triggered.connect(self.open_file)
+        file_menu.addAction(open_action)
+        
+        file_menu.addSeparator()
+        
+        save_action = QAction("Save", self)
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self.save_file)
+        file_menu.addAction(save_action)
+        
+        save_as_action = QAction("Save As...", self)
+        save_as_action.setShortcut("Ctrl+Shift+S")
+        save_as_action.triggered.connect(self.save_as_file)
+        file_menu.addAction(save_as_action)
+        
+        file_menu.addSeparator()
+        
+        close_tab_action = QAction("Close Tab", self)
+        close_tab_action.setShortcut("Ctrl+W")
+        close_tab_action.triggered.connect(lambda: self.close_tab(self.tab_widget.currentIndex()))
+        file_menu.addAction(close_tab_action)
+        
+        file_menu.addSeparator()
+        
+        exit_action = QAction("Exit", self)
+        exit_action.setShortcut("Ctrl+Q")
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+        
+        # EDIT
+        edit_menu = menu_bar.addMenu("Edit")
+        
+        undo_action = QAction("Undo", self)
+        undo_action.setShortcut("Ctrl+Z")
+        undo_action.triggered.connect(lambda: self.current_editor().undo() if self.current_editor() else None)
+        edit_menu.addAction(undo_action)
+        
+        redo_action = QAction("Redo", self)
+        redo_action.setShortcut("Ctrl+Y")
+        redo_action.triggered.connect(lambda: self.current_editor().redo() if self.current_editor() else None)
+        edit_menu.addAction(redo_action)
+        
+        edit_menu.addSeparator()
+        
+        cut_action = QAction("Cut", self)
+        cut_action.setShortcut("Ctrl+X")
+        cut_action.triggered.connect(lambda: self.current_editor().cut() if self.current_editor() else None)
+        edit_menu.addAction(cut_action)
+        
+        copy_action = QAction("Copy", self)
+        copy_action.setShortcut("Ctrl+C")
+        copy_action.triggered.connect(lambda: self.current_editor().copy() if self.current_editor() else None)
+        edit_menu.addAction(copy_action)
+        
+        paste_action = QAction("Paste", self)
+        paste_action.setShortcut("Ctrl+V")
+        paste_action.triggered.connect(lambda: self.current_editor().paste() if self.current_editor() else None)
+        edit_menu.addAction(paste_action)
+        
+        delete_action = QAction("Delete", self)
+        delete_action.setShortcut("Delete")
+        delete_action.triggered.connect(self.delete_text)
+        edit_menu.addAction(delete_action)
+        
+        edit_menu.addSeparator()
+        
+        find_action = QAction("Find...", self)
+        find_action.setShortcut("Ctrl+F")
+        find_action.triggered.connect(self.show_find_dialog)
+        edit_menu.addAction(find_action)
+        
+        replace_action = QAction("Replace...", self)
+        replace_action.setShortcut("Ctrl+H")
+        replace_action.triggered.connect(self.show_replace_dialog)
+        edit_menu.addAction(replace_action)
+        
+        goto_action = QAction("Go To...", self)
+        goto_action.setShortcut("Ctrl+G")
+        goto_action.triggered.connect(self.show_goto_dialog)
+        edit_menu.addAction(goto_action)
+        
+        edit_menu.addSeparator()
+        
+        select_all_action = QAction("Select All", self)
+        select_all_action.setShortcut("Ctrl+A")
+        select_all_action.triggered.connect(lambda: self.current_editor().selectAll() if self.current_editor() else None)
+        edit_menu.addAction(select_all_action)
+        
+        time_date_action = QAction("Time/Date", self)
+        time_date_action.setShortcut("F5")
+        time_date_action.triggered.connect(self.insert_time_date)
+        edit_menu.addAction(time_date_action)
+        
+        comment_action = QAction("Toggle Comment", self)
+        comment_action.setShortcut("Ctrl+/")
+        comment_action.triggered.connect(lambda: self.current_editor().toggle_comment() if self.current_editor() else None)
+        edit_menu.addAction(comment_action)
+        
+        # TAB
+        tab_menu = menu_bar.addMenu("Tab")
+        
+        next_tab_action = QAction("Next Tab", self)
+        next_tab_action.setShortcut("Ctrl+Tab")
+        next_tab_action.triggered.connect(self.next_tab)
+        tab_menu.addAction(next_tab_action)
+        
+        prev_tab_action = QAction("Previous Tab", self)
+        prev_tab_action.setShortcut("Ctrl+Shift+Tab")
+        prev_tab_action.triggered.connect(self.prev_tab)
+        tab_menu.addAction(prev_tab_action)
+        
+        # FORMAT
+        format_menu = menu_bar.addMenu("Format")
+        
+        word_wrap_action = QAction("Word Wrap", self)
+        word_wrap_action.setCheckable(True)
+        word_wrap_action.setChecked(False)
+        word_wrap_action.triggered.connect(self.toggle_word_wrap)
+        format_menu.addAction(word_wrap_action)
+        
+        font_action = QAction("Font...", self)
+        font_action.triggered.connect(self.choose_font)
+        format_menu.addAction(font_action)
+        
+        # VIEW
+        view_menu = menu_bar.addMenu("View")
+        
+        status_bar_action = QAction("Status Bar", self)
+        status_bar_action.setCheckable(True)
+        status_bar_action.setChecked(True)
+        status_bar_action.triggered.connect(self.toggle_status_bar)
+        view_menu.addAction(status_bar_action)
+        
+        self.dark_mode_action = QAction("Dark Mode", self)
+        self.dark_mode_action.setCheckable(True)
+        self.dark_mode_action.setChecked(False)
+        self.dark_mode_action.triggered.connect(self.toggle_dark_mode)
+        view_menu.addAction(self.dark_mode_action)
+        
+        # HELP
+        help_menu = menu_bar.addMenu("Help")
+        
+        register_action = QAction("Register 'Open with' Menu", self)
+        register_action.triggered.connect(self.manual_register)
+        help_menu.addAction(register_action)
+        
+        unregister_action = QAction("Unregister 'Open with' Menu", self)
+        unregister_action.triggered.connect(self.manual_unregister)
+        help_menu.addAction(unregister_action)
+        
+        help_menu.addSeparator()
+        
+        about_action = QAction("About coding-pad", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+    
+    def manual_register(self):
+        if not getattr(sys, 'frozen', False):
+            QMessageBox.information(self, "Info", 
+                "This feature only works when running as .exe\n(not when running as .py)")
+            return
+        exe_path = sys.executable
+        if register_context_menu(exe_path):
+            QMessageBox.information(self, "Success", 
+                f"Registered 'Open with coding-pad' for:\n{exe_path}")
+        else:
+            QMessageBox.critical(self, "Error", "Failed to register context menu.")
+    
+    def manual_unregister(self):
+        if unregister_context_menu():
+            QMessageBox.information(self, "Success", 
+                "Unregistered 'Open with coding-pad' menu.")
+        else:
+            QMessageBox.critical(self, "Error", "Failed to unregister context menu.")
+    
+    def show_about(self):
+        QMessageBox.about(self, "About coding-pad",
+            "<h2>coding-puddle.exe</h2>"
+            "<p>Lightweight Python editor for weak PCs</p>"
+            "<p><b>Version:</b> 1.0</p>"
+            "<p><b>RAM:</b> ~30MB</p>"
+            "<p><b>License:</b> MIT</p>")
+    
+    def toggle_dark_mode(self, checked):
+        self.dark_mode = checked
+        for tab in self.tabs:
+            tab.editor.dark_mode = checked
+            tab.editor.update_colors()
+        self.apply_theme()
+    
+    def delete_text(self):
+        editor = self.current_editor()
+        if editor:
+            cursor = editor.textCursor()
+            if cursor.hasSelection():
+                cursor.removeSelectedText()
+    
+    def insert_time_date(self):
+        editor = self.current_editor()
+        if editor:
+            now = datetime.now()
+            cursor = editor.textCursor()
+            cursor.insertText(now.strftime("%I:%M %p %m/%d/%Y"))
+    
+    def toggle_word_wrap(self, checked):
+        for tab in self.tabs:
+            if checked:
+                tab.editor.setLineWrapMode(QTextEdit.WidgetWidth)
+                tab.editor.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            else:
+                tab.editor.setLineWrapMode(QTextEdit.NoWrap)
+                tab.editor.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    
+    def choose_font(self):
+        editor = self.current_editor()
+        if not editor:
+            return
+        font, ok = QFontDialog.getFont(editor.font(), self, "Choose Font")
+        if ok:
+            self.font_family = font.family()
+            self.font_size = font.pointSize()
+            self.apply_font()
+    
+    def toggle_status_bar(self, checked):
+        self.status_bar.setVisible(checked)
+    
+    def show_find_dialog(self):
+        editor = self.current_editor()
+        if editor:
+            self.find_dialog = FindDialog(editor)
+            self.find_dialog.show()
+    
+    def show_replace_dialog(self):
+        editor = self.current_editor()
+        if editor:
+            self.replace_dialog = ReplaceDialog(editor)
+            self.replace_dialog.show()
+    
+    def show_goto_dialog(self):
+        editor = self.current_editor()
+        if editor:
+            dialog = GotoDialog(editor)
+            dialog.exec_()
+    
+    def new_file(self):
+        self.add_new_tab()
+    
+    def open_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open File", "",
+            "Python Files (*.py);;Text Files (*.txt);;All Files (*)"
+        )
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self.add_new_tab(file_path, content)
+                self.apply_font()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not open file: {str(e)}")
+    
+    def save_file(self):
+        index = self.tab_widget.currentIndex()
+        self.save_tab(index)
+    
+    def save_as_file(self):
+        index = self.tab_widget.currentIndex()
+        self.save_tab_as(index)
+    
+    def closeEvent(self, event):
+        self.save_settings()
+        for i in range(len(self.tabs) - 1, -1, -1):
+            tab = self.tabs[i]
+            if tab.is_modified:
+                self.tab_widget.setCurrentIndex(i)
+                reply = QMessageBox.question(
+                    self, "Unsaved Changes",
+                    f"Do you want to save changes to {tab.get_display_name().rstrip(' *')}?",
+                    QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
+                )
+                if reply == QMessageBox.Save:
+                    if not self.save_tab(i):
+                        event.ignore()
+                        return
+                elif reply == QMessageBox.Cancel:
+                    event.ignore()
+                    return
+        event.accept()
+
+
+# ============================================================
+# DIALOGS (FIXED)
+# ============================================================
+
+class FindDialog(QDialog):
+    def __init__(self, text_area):
+        super().__init__()
+        self.text_area = text_area
+        self.setWindowTitle("Find")
+        self.setFixedSize(400, 150)
+        
+        layout = QVBoxLayout()
+        
+        hbox = QHBoxLayout()
+        hbox.addWidget(QLabel("Find what:"))
+        self.find_input = QLineEdit()
+        hbox.addWidget(self.find_input)
+        layout.addLayout(hbox)
+        
+        hbox2 = QHBoxLayout()
+        self.case_check = QCheckBox("Match case")
+        hbox2.addWidget(self.case_check)
+        self.word_check = QCheckBox("Whole word")
+        hbox2.addWidget(self.word_check)
+        layout.addLayout(hbox2)
+        
+        hbox3 = QHBoxLayout()
+        find_next = QPushButton("Find Next")
+        find_next.clicked.connect(self.on_find_next_clicked)
+        find_next.setDefault(True)  # ⭐ Enter sẽ trigger nút này
+        hbox3.addWidget(find_next)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        hbox3.addWidget(close_btn)
+        layout.addLayout(hbox3)
+        
+        self.setLayout(layout)
+    
+    def on_find_next_clicked(self):
+        self.show_not_found = True
+        self.find_next()
+    
+    def find_next(self):
+        text = self.find_input.text()
+        if not text:
+            return
+        
+        cursor = self.text_area.textCursor()
+        flags = QTextDocument.FindFlags()
+        if self.case_check.isChecked():
+            flags |= QTextDocument.FindCaseSensitively
+        if self.word_check.isChecked():
+            flags |= QTextDocument.FindWholeWords
+        
+        new_cursor = self.text_area.document().find(text, cursor, flags)
+        if not new_cursor.isNull():
+            self.text_area.setTextCursor(new_cursor)
+        else:
+            cursor.movePosition(QTextCursor.Start)
+            new_cursor = self.text_area.document().find(text, cursor, flags)
+            if not new_cursor.isNull():
+                self.text_area.setTextCursor(new_cursor)
+            else:
+                if getattr(self, 'show_not_found', True):
+                    QMessageBox.information(
+                        self, "Find", 
+                        f'Cannot find "{text}"'
+                    )
+                self.show_not_found = False
+
+
+class ReplaceDialog(QDialog):
+    def __init__(self, text_area):
+        super().__init__()
+        self.text_area = text_area
+        self.setWindowTitle("Replace")
+        self.setFixedSize(400, 200)
+        
+        layout = QVBoxLayout()
+        
+        hbox = QHBoxLayout()
+        hbox.addWidget(QLabel("Find what:"))
+        self.find_input = QLineEdit()
+        hbox.addWidget(self.find_input)
+        layout.addLayout(hbox)
+        
+        hbox2 = QHBoxLayout()
+        hbox2.addWidget(QLabel("Replace with:"))
+        self.replace_input = QLineEdit()
+        hbox2.addWidget(self.replace_input)
+        layout.addLayout(hbox2)
+        
+        hbox3 = QHBoxLayout()
+        self.case_check = QCheckBox("Match case")
+        hbox3.addWidget(self.case_check)
+        self.word_check = QCheckBox("Whole word")
+        hbox3.addWidget(self.word_check)
+        layout.addLayout(hbox3)
+        
+        hbox4 = QHBoxLayout()
+        find_btn = QPushButton("Find Next")
+        find_btn.clicked.connect(self.on_find_next_clicked)
+        find_btn.setDefault(True)  # ⭐ Enter sẽ trigger nút này
+        hbox4.addWidget(find_btn)
+        replace_btn = QPushButton("Replace")
+        replace_btn.clicked.connect(self.replace)
+        hbox4.addWidget(replace_btn)
+        replace_all_btn = QPushButton("Replace All")
+        replace_all_btn.clicked.connect(self.replace_all)
+        hbox4.addWidget(replace_all_btn)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        hbox4.addWidget(close_btn)
+        layout.addLayout(hbox4)
+        
+        self.setLayout(layout)
+    
+    def on_find_next_clicked(self):
+        self.show_not_found = True
+        self.find_next()
+    
+    def find_next(self):
+        text = self.find_input.text()
+        if not text:
+            return
+        
+        cursor = self.text_area.textCursor()
+        flags = QTextDocument.FindFlags()
+        if self.case_check.isChecked():
+            flags |= QTextDocument.FindCaseSensitively
+        if self.word_check.isChecked():
+            flags |= QTextDocument.FindWholeWords
+        
+        new_cursor = self.text_area.document().find(text, cursor, flags)
+        if not new_cursor.isNull():
+            self.text_area.setTextCursor(new_cursor)
+        else:
+            cursor.movePosition(QTextCursor.Start)
+            new_cursor = self.text_area.document().find(text, cursor, flags)
+            if not new_cursor.isNull():
+                self.text_area.setTextCursor(new_cursor)
+            else:
+                if getattr(self, 'show_not_found', True):
+                    QMessageBox.information(
+                        self, "Replace", 
+                        f'Cannot find "{text}"'
+                    )
+                self.show_not_found = False
+    
+    def replace(self):
+        text = self.find_input.text()
+        if not text:
+            return
+        
+        cursor = self.text_area.textCursor()
+        
+        if not cursor.hasSelection():
+            self.find_next()
+            return
+        
+        if cursor.selectedText() != text:
+            self.find_next()
+            return
+        
+        cursor.insertText(self.replace_input.text())
+        self.find_next()
+    
+    def replace_all(self):
+        text = self.find_input.text()
+        replace_text = self.replace_input.text()
+        if not text:
+            return
+        
+        count = 0
+        cursor = self.text_area.textCursor()
+        cursor.movePosition(QTextCursor.Start)
+        self.text_area.setTextCursor(cursor)
+        
+        flags = QTextDocument.FindFlags()
+        if self.case_check.isChecked():
+            flags |= QTextDocument.FindCaseSensitively
+        if self.word_check.isChecked():
+            flags |= QTextDocument.FindWholeWords
+        
+        while True:
+            new_cursor = self.text_area.document().find(text, cursor, flags)
+            if new_cursor.isNull():
+                break
+            self.text_area.setTextCursor(new_cursor)
+            cursor = self.text_area.textCursor()
+            cursor.insertText(replace_text)
+            count += 1
+        
+        if count > 0:
+            QMessageBox.information(
+                self, "Replace All", 
+                f"Replaced {count} occurrence(s)"
+            )
+        else:
+            QMessageBox.information(
+                self, "Replace All", 
+                f'Cannot find "{text}"'
+            )
+
+
+class GotoDialog(QDialog):
+    def __init__(self, text_area):
+        super().__init__()
+        self.text_area = text_area
+        self.setWindowTitle("Go To")
+        self.setFixedSize(300, 120)
+        
+        layout = QVBoxLayout()
+        
+        hbox = QHBoxLayout()
+        hbox.addWidget(QLabel("Line number:"))
+        self.line_input = QLineEdit()
+        # ⭐ CHỈ GIỮ returnPressed (nhấn Enter)
+        self.line_input.returnPressed.connect(self.go_to_line)
+        hbox.addWidget(self.line_input)
+        layout.addLayout(hbox)
+        
+        hbox2 = QHBoxLayout()
+        go_btn = QPushButton("Go To")
+        # ⭐ Nút chỉ focus vào input (không gọi go_to_line)
+        go_btn.clicked.connect(self.line_input.setFocus)
+        hbox2.addWidget(go_btn)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        hbox2.addWidget(close_btn)
+        layout.addLayout(hbox2)
+        
+        self.setLayout(layout)
+    
+    def go_to_line(self):
+        try:
+            line_num = int(self.line_input.text())
+            if line_num < 1:
+                QMessageBox.warning(self, "Go To", "Line number must be >= 1")
+                return
+            
+            total_lines = self.text_area.document().blockCount()
+            
+            if line_num > total_lines:
+                QMessageBox.warning(
+                    self, "Go To", 
+                    f"Line number too large\nTotal lines: {total_lines}"
+                )
+                return
+            
+            cursor = self.text_area.textCursor()
+            cursor.movePosition(QTextCursor.Start)
+            
+            for i in range(line_num - 1):
+                cursor.movePosition(QTextCursor.Down)
+            
+            self.text_area.setTextCursor(cursor)
+            self.close()
+        except ValueError:
+            QMessageBox.warning(self, "Go To", "Please enter a valid number")
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MyNotepad()
+    
+    auto_register_context_menu()
+    
+    if len(sys.argv) > 1:
+        file_path = sys.argv[1]
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            window.add_new_tab(file_path, content)
+            window.apply_font()
+        except Exception as e:
+            print(f"Error opening file: {e}")
+    
+    window.show()
+    sys.exit(app.exec_())
