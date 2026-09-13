@@ -100,7 +100,7 @@ py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 | `Ctrl + Tab` | Next tab |
 | `Ctrl + Shift + Tab` | Previous tab |
 | `F5` | Time/Date |
-| `Tab` | Indent (line start) / 4 spaces (mid-line) |
+| `Tab` | 1 indentation (line start)/4 spaces |
 | `Shift + Tab` | Unindent |
 | `Ctrl + Shift + W` | Word count |
 
