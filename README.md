@@ -74,8 +74,8 @@ py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 
 ## Requirements
 
-- **OS**: Windows 7/8/10/11
-- **RAM**: at least 2GB (for the best performance)
+- **Operating System**: Windows 7/8/10/11
+- **RAM**: at least 2GB (for best performance)
 - **Python version** (if running from source code): 3.8+
 
 ---
@@ -106,7 +106,7 @@ py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 
 ---
 
-## How to Use
+## How to use
 
 ### Open a file
 
@@ -115,22 +115,22 @@ py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 - **Option 3**: Drag file into the app window
 - **Option 4**: `coding-puddle.exe [file_name].py` (command line)
 
-### Tear-off Tab
+### Tear-off tab
 
 - Click and hold a tab
 - Drag it outside the tab bar
 --> A new window appears with that file
 
-### Auto-scroll
+### Automatically scrolling
 
 - Middle-click anywhere in the editor --> An anchor appears
 - Move mouse up/down --> The page scrolls automatically
 - The further from the anchor, the faster it scrolls
 - Middle-click again to disable
 
-### Register Context Menu
+### Register context menu
 
-- **Automatic**: Run the app once --> it registers automatically
+- **Automatically**: Run the app once --> it registers automatically
 - **Manually**: Help --> Register 'Open with' Menu
 - **Removing**: Help --> Unregister 'Open with' Menu
 
@@ -157,7 +157,7 @@ Contributions are welcome!
 
 ---
 
-## Bug Reports
+## Bug reports
 
 If you find a bug, please create an [Issue](../../issues) with:
 - Description of the bug
