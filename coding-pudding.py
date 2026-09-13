@@ -190,6 +190,9 @@ class CodeEditor(QTextEdit):
         self.setLineWrapMode(QTextEdit.NoWrap)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
+        # Bracket highlighting color
+        self.bracket_color = QColor(255, 200, 100, 150)
+        
         self.auto_scroll_active = False
         self.auto_scroll_anchor = None
         self.auto_scroll_timer = QTimer()
@@ -200,6 +203,7 @@ class CodeEditor(QTextEdit):
         self.update_colors()
         
         self.cursorPositionChanged.connect(self.update_line_number_area)
+        self.cursorPositionChanged.connect(self.highlight_brackets)
         self.textChanged.connect(self.update_line_number_area)
         self.verticalScrollBar().valueChanged.connect(self.update_line_number_area)
         
@@ -259,6 +263,7 @@ class CodeEditor(QTextEdit):
         self.dark_mode = dark_mode
         self.update_colors()
     
+    # ============ EXPAND BRACKET PAIR ============
     def expand_bracket_pair(self, open_char, close_char):
         """Expand empty bracket pair into multi-line structure"""
         cursor = self.textCursor()
@@ -290,6 +295,32 @@ class CodeEditor(QTextEdit):
         cursor.setPosition(open_pos + 1 + len(inner_indent))
         self.setTextCursor(cursor)
     
+    # ============ DELETE BRACKET PAIR (CHỈ XÓA KHI RỖNG) ============
+    def delete_bracket_pair(self):
+        """Delete matching bracket pair ONLY if empty"""
+        cursor = self.textCursor()
+        pos = cursor.position()
+        text = self.document().toPlainText()
+        
+        brackets = {'(': ')', '[': ']', '{': '}', '<': '>', '"': '"', "'": "'"}
+        
+        # Only delete when cursor is BETWEEN an EMPTY bracket pair
+        if pos > 0 and pos < len(text):
+            char_left = text[pos - 1]
+            char_right = text[pos]
+            
+            if char_left in brackets:
+                expected_close = brackets[char_left]
+                if char_right == expected_close:
+                    # Empty bracket pair → delete both
+                    cursor.setPosition(pos - 1)
+                    cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, 2)
+                    cursor.removeSelectedText()
+                    return True
+        
+        return False
+    
+    # ============ TRIM TRAILING SPACES ============
     def trim_trailing_spaces(self):
         """Remove trailing spaces from all lines"""
         cursor = self.textCursor()
@@ -315,6 +346,7 @@ class CodeEditor(QTextEdit):
             return True
         return False
     
+    # ============ WORD COUNT ============
     def get_word_count(self):
         """Get word count statistics"""
         text = self.toPlainText()
@@ -338,7 +370,120 @@ class CodeEditor(QTextEdit):
             'paragraphs': paragraph_count
         }
     
-    # AUTO-SCROLL
+    # ============ BRACKET HIGHLIGHTING ============
+    def highlight_brackets(self):
+        """Highlight matching bracket pairs"""
+        cursor = self.textCursor()
+        pos = cursor.position()
+        text = self.document().toPlainText()
+        
+        if not text:
+            self.clear_bracket_highlight()
+            return
+        
+        brackets = {
+            '(': ')', '[': ']', '{': '}', '<': '>',
+            '"': '"', "'": "'", '`': '`'
+        }
+        
+        char_left = text[pos - 1] if pos > 0 else ''
+        char_right = text[pos] if pos < len(text) else ''
+        
+        if char_left in brackets:
+            match_pos = self.find_matching_bracket(text, pos - 1, brackets)
+            if match_pos != -1:
+                self.highlight_bracket_pair(pos - 1, match_pos)
+                return
+        
+        if char_right in brackets.values():
+            for open_bracket, close_bracket in brackets.items():
+                if char_right == close_bracket:
+                    match_pos = self.find_matching_bracket_reverse(text, pos, open_bracket, close_bracket)
+                    if match_pos != -1:
+                        self.highlight_bracket_pair(match_pos, pos)
+                    return
+        
+        self.clear_bracket_highlight()
+    
+    def find_matching_bracket(self, text, pos, brackets):
+        """Find matching closing bracket"""
+        open_char = text[pos]
+        close_char = brackets[open_char]
+        
+        if open_char in ['"', "'", '`']:
+            i = pos + 1
+            while i < len(text):
+                if text[i] == close_char and (i == 0 or text[i-1] != '\\'):
+                    return i
+                i += 1
+            return -1
+        
+        count = 1
+        i = pos + 1
+        while i < len(text):
+            if text[i] == open_char:
+                count += 1
+            elif text[i] == close_char:
+                count -= 1
+                if count == 0:
+                    return i
+            i += 1
+        return -1
+    
+    def find_matching_bracket_reverse(self, text, pos, open_char, close_char):
+        """Find matching opening bracket (reverse search)"""
+        if open_char in ['"', "'", '`']:
+            i = pos - 1
+            while i >= 0:
+                if text[i] == open_char and (i == 0 or text[i-1] != '\\'):
+                    return i
+                i -= 1
+            return -1
+        
+        count = 1
+        i = pos - 1
+        while i >= 0:
+            if text[i] == close_char:
+                count += 1
+            elif text[i] == open_char:
+                count -= 1
+                if count == 0:
+                    return i
+            i -= 1
+        return -1
+    
+    def highlight_bracket_pair(self, start_pos, end_pos):
+        """Apply highlight to bracket pair"""
+        extra_selections = self.extraSelections()
+        new_selections = []
+        
+        for sel in extra_selections:
+            if sel.format.background() != self.bracket_color:
+                new_selections.append(sel)
+        
+        for pos in [start_pos, end_pos]:
+            cursor = self.textCursor()
+            cursor.setPosition(pos)
+            cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, 1)
+            
+            selection = QTextEdit.ExtraSelection()
+            selection.format.setBackground(self.bracket_color)
+            selection.format.setForeground(QColor(0, 0, 0))
+            selection.cursor = cursor
+            new_selections.append(selection)
+        
+        self.setExtraSelections(new_selections)
+    
+    def clear_bracket_highlight(self):
+        """Remove bracket highlights"""
+        extra_selections = self.extraSelections()
+        new_selections = []
+        for sel in extra_selections:
+            if sel.format.background() != self.bracket_color:
+                new_selections.append(sel)
+        self.setExtraSelections(new_selections)
+    
+    # ============ AUTO-SCROLL ============
     def start_auto_scroll(self, pos):
         self.auto_scroll_active = True
         self.auto_scroll_anchor = pos
@@ -409,7 +554,7 @@ class CodeEditor(QTextEdit):
             self.stop_auto_scroll()
         super().wheelEvent(event)
     
-    # INDENT / UNINDENT
+    # ============ INDENT / UNINDENT ============
     def indent_selection(self):
         cursor = self.textCursor()
         original_pos = cursor.position()
@@ -507,7 +652,7 @@ class CodeEditor(QTextEdit):
         
         self.setTextCursor(cursor)
     
-    # COMMENT/UNCOMMENT
+    # ============ COMMENT/UNCOMMENT ============
     def toggle_comment(self):
         cursor = self.textCursor()
         start = cursor.selectionStart()
@@ -572,33 +717,7 @@ class CodeEditor(QTextEdit):
         cursor.setPosition(start_line_pos + len(new_text), QTextCursor.KeepAnchor)
         self.setTextCursor(cursor)
     
-    # BRACKET MATCHING
-    def get_bracket_at_cursor(self):
-        cursor = self.textCursor()
-        pos = cursor.position()
-        text = self.document().toPlainText()
-        brackets = {'(': ')', '[': ']', '{': '}', '<': '>', '"': '"', "'": "'"}
-        
-        if pos > 0 and pos < len(text):
-            char_left = text[pos - 1]
-            char_right = text[pos]
-            if char_left in brackets:
-                expected_close = brackets[char_left]
-                if char_right == expected_close:
-                    return (pos - 1, pos, char_left, char_right)
-        return None
-        
-    def delete_bracket_pair(self):
-        bracket_info = self.get_bracket_at_cursor()
-        if bracket_info:
-            start_pos, end_pos, open_char, close_char = bracket_info
-            cursor = self.textCursor()
-            cursor.setPosition(start_pos)
-            cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, end_pos - start_pos + 1)
-            cursor.removeSelectedText()
-            return True
-        return False
-        
+    # ============ EVENT FILTER ============
     def eventFilter(self, obj, event):
         if event.type() == event.KeyPress:
             if event.key() == Qt.Key_Tab:
@@ -836,7 +955,7 @@ class CustomTabWidget(QTabWidget):
 class MyNotepad(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("coding-puddle.exe")
+        self.setWindowTitle("coding-pudding.exe")
         self.setGeometry(100, 100, 1000, 800)
         
         self.dark_mode = False
@@ -1091,7 +1210,7 @@ class MyNotepad(QMainWindow):
             self.update_title()
     
     def update_title(self):
-        base_title = "coding-puddle.exe"
+        base_title = "coding-pudding.exe"
         tab = self.current_tab()
         if tab:
             if tab.file_path:
@@ -1422,7 +1541,7 @@ class MyNotepad(QMainWindow):
     
     def show_about(self):
         QMessageBox.about(self, "About coding-pad",
-            "<h2>coding-puddle.exe</h2>"
+            "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
             "<p><b>Version:</b> 1.0</p>"
             "<p><b>RAM:</b> ~30MB</p>"
@@ -1564,7 +1683,7 @@ class FindDialog(QDialog):
         super().__init__()
         self.text_area = text_area
         self.setWindowTitle("Find")
-        self.setFixedSize(400, 150)
+        self.setFixedSize(400, 180)
         
         layout = QVBoxLayout()
         
@@ -1581,7 +1700,6 @@ class FindDialog(QDialog):
         hbox2.addWidget(self.word_check)
         layout.addLayout(hbox2)
         
-        # Direction (Up/Down)
         direction_group = QGroupBox("Direction")
         direction_layout = QHBoxLayout()
         
@@ -1652,7 +1770,7 @@ class ReplaceDialog(QDialog):
         super().__init__()
         self.text_area = text_area
         self.setWindowTitle("Replace")
-        self.setFixedSize(400, 180)
+        self.setFixedSize(400, 240)
         
         layout = QVBoxLayout()
         
@@ -1675,7 +1793,6 @@ class ReplaceDialog(QDialog):
         hbox3.addWidget(self.word_check)
         layout.addLayout(hbox3)
         
-        # Direction (Up/Down)
         direction_group = QGroupBox("Direction")
         direction_layout = QHBoxLayout()
         
