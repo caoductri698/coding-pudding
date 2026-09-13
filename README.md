@@ -24,12 +24,12 @@
 - **Tabs** — Open multiple files in one window.
 - **Dark mode** — Protect your eyes during long coding sessions.
 - **Automatical indentation** — Automatically indent after `:` (no more typing 4 spaces manually).
-- **Bracket matching** — Auto-close `()`, `[]`, `{}`, `<>`, `""`, `''`.
+- **Bracket matching** — Automatically close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
 - **Smart bracket deletion** — Delete matching bracket pairs intelligently.
 - **Tear-off tabs** — Drag a tab out to create a new window with that file.
 - **Automatically scrolling** — Middle-click to create an anchor and scroll automatically.
 - **Toggle comment** — `Ctrl + /` to comment/uncomment selected lines.
-- **Line numbers** — Easily locate your code by line.
+- **Line numbers** — Easily locate your code by line number.
 - **Find/Replace/Go To** — Full search, replace, and navigation support.
 - **Automatically saving settings** — Remembers your theme (dark/light) and window size.
 - **"Open with coding-puddle"** — Right-click any file to open it directly.
@@ -42,7 +42,7 @@
 
 1. Download `coding-puddle.exe` from [**Releases**](../../releases).
 2. Run the file (no Python installation required).
-3. Right-click any file → **"Open with coding-puddle"**.
+3. Right-click any file --> **"Open with coding-puddle"**.
 
 ### Option 2: Run from source code (coding-puddle.py)
 
@@ -84,25 +84,25 @@ py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 
 | Shortcut | Action |
 | :--- | :--- |
-| `Ctrl + N` | New File |
-| `Ctrl + T` | New Tab |
-| `Ctrl + O` | Open File |
+| `Ctrl + N` | New file |
+| `Ctrl + T` | New tab |
+| `Ctrl + O` | Open file |
 | `Ctrl + S` | Save |
-| `Ctrl + Shift + S` | Save As |
-| `Ctrl + W` | Close Tab |
+| `Ctrl + Shift + S` | Save as |
+| `Ctrl + W` | Close tab |
 | `Ctrl + Q` | Exit |
 | `Ctrl + Z` | Undo |
 | `Ctrl + Y` | Redo |
 | `Ctrl + F` | Find |
 | `Ctrl + H` | Replace |
 | `Ctrl + G` | Go To |
-| `Ctrl + /` | Toggle Comment |
-| `Ctrl + Tab` | Next Tab |
-| `Ctrl + Shift + Tab` | Previous Tab |
+| `Ctrl + /` | Toggle comment |
+| `Ctrl + Tab` | Next tab |
+| `Ctrl + Shift + Tab` | Previous tab |
 | `F5` | Time/Date |
 | `Tab` | Indent (line start) / 4 spaces (mid-line) |
 | `Shift + Tab` | Unindent |
-| `Ctrl + Shift + W` | Word Count |
+| `Ctrl + Shift + W` | Word count |
 
 ---
 
@@ -110,8 +110,8 @@ py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 
 ### Open a file
 
-- **Option 1**: `Ctrl + O` → Choose file
-- **Option 2**: Right-click file → **"Open with coding-puddle"**
+- **Option 1**: `Ctrl + O` --> Choose file
+- **Option 2**: Right-click file --> **"Open with coding-puddle"**
 - **Option 3**: Drag file into the app window
 - **Option 4**: `coding-puddle.exe [file_name].py` (command line)
 
@@ -131,8 +131,8 @@ py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 ### Register Context Menu
 
 - **Automatic**: Run the app once --> it registers automatically
-- **Manually**: Help → Register 'Open with' Menu
-- **Removing**: Help → Unregister 'Open with' Menu
+- **Manually**: Help --> Register 'Open with' Menu
+- **Removing**: Help --> Unregister 'Open with' Menu
 
 ---
 
