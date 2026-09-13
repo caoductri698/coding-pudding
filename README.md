@@ -1,4 +1,4 @@
-# coding-puddle.exe (version 1.0)
+# coding-puddle.exe
 
 > A lightweight Python IDE for low-configuration laptops/PCs.
 
@@ -22,30 +22,29 @@
 ## Features
 
 - **Tabs** — Open multiple files in one window.
-- **Dark Mode** — Protect your eyes during long coding sessions.
-- **Auto-indent** — Automatically indent after `:` (no more typing 4 spaces manually).
-- **Bracket Matching** — Auto-close `()`, `[]`, `{}`, `<>`, `""`, `''`.
-- **Smart Bracket Delete** — Delete matching bracket pairs intelligently.
-- **Tear-off Tabs** — Drag a tab out to create a new window with that file.
-- **Auto-scroll** — Middle-click to create an anchor and scroll automatically.
-- **Toggle Comment** — `Ctrl + /` to comment/uncomment selected lines.
-- **Line Numbers** — Easily locate your code by line.
+- **Dark mode** — Protect your eyes during long coding sessions.
+- **Automatical indentation** — Automatically indent after `:` (no more typing 4 spaces manually).
+- **Bracket matching** — Auto-close `()`, `[]`, `{}`, `<>`, `""`, `''`.
+- **Smart bracket deletion** — Delete matching bracket pairs intelligently.
+- **Tear-off tabs** — Drag a tab out to create a new window with that file.
+- **Automatically scrolling** — Middle-click to create an anchor and scroll automatically.
+- **Toggle comment** — `Ctrl + /` to comment/uncomment selected lines.
+- **Line numbers** — Easily locate your code by line.
 - **Find/Replace/Go To** — Full search, replace, and navigation support.
-- **Auto-save Settings** — Remembers your theme (dark/light) and window size.
+- **Automatically saving settings** — Remembers your theme (dark/light) and window size.
 - **"Open with coding-puddle"** — Right-click any file to open it directly.
-- **Unicode Support** — Full support for Vietnamese, emoji, and more.
 
 ---
 
 ## Installation
 
-### Option 1: Download .exe (Recommended)
+### Option 1: Download coding-puddle.exe (Recommended)
 
 1. Download `coding-puddle.exe` from [**Releases**](../../releases).
 2. Run the file (no Python installation required).
 3. Right-click any file → **"Open with coding-puddle"**.
 
-### Option 2: Run from Source
+### Option 2: Run from source code (coding-puddle.py)
 
 ```bash
 # Clone repository
@@ -59,7 +58,7 @@ pip install PyQt5
 py coding-puddle.py
 ```
 
-### Option 3: Build .exe Yourself
+### Option 3: Build coding-puddle.exe by yourself
 
 ```bash
 # Install PyInstaller
@@ -68,7 +67,7 @@ pip install pyinstaller
 # Build
 py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 
-# File .exe is in dist/coding-puddle.exe
+# File .exe is ready in dist/coding-puddle.exe
 ```
 
 ---
@@ -76,9 +75,8 @@ py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 ## Requirements
 
 - **OS**: Windows 7/8/10/11
-- **RAM**: 30MB
-- **Storage**: 35MB
-- **Python** (if running from source): 3.8+
+- **RAM**: at least 2GB (for the best performance)
+- **Python version** (if running from source code): 3.8+
 
 ---
 
@@ -86,58 +84,59 @@ py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 
 | Shortcut | Action |
 | :--- | :--- |
-| `Ctrl+N` | New File |
-| `Ctrl+T` | New Tab |
-| `Ctrl+O` | Open File |
-| `Ctrl+S` | Save |
-| `Ctrl+Shift+S` | Save As |
-| `Ctrl+W` | Close Tab |
-| `Ctrl+Q` | Exit |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Y` | Redo |
-| `Ctrl+F` | Find |
-| `Ctrl+H` | Replace |
-| `Ctrl+G` | Go To |
-| `Ctrl+/` | Toggle Comment |
-| `Ctrl+Tab` | Next Tab |
-| `Ctrl+Shift+Tab` | Previous Tab |
+| `Ctrl + N` | New File |
+| `Ctrl + T` | New Tab |
+| `Ctrl + O` | Open File |
+| `Ctrl + S` | Save |
+| `Ctrl + Shift + S` | Save As |
+| `Ctrl + W` | Close Tab |
+| `Ctrl + Q` | Exit |
+| `Ctrl + Z` | Undo |
+| `Ctrl + Y` | Redo |
+| `Ctrl + F` | Find |
+| `Ctrl + H` | Replace |
+| `Ctrl + G` | Go To |
+| `Ctrl + /` | Toggle Comment |
+| `Ctrl + Tab` | Next Tab |
+| `Ctrl + Shift + Tab` | Previous Tab |
 | `F5` | Time/Date |
 | `Tab` | Indent (line start) / 4 spaces (mid-line) |
-| `Shift+Tab` | Unindent |
+| `Shift + Tab` | Unindent |
+| `Ctrl + Shift + W` | Word Count |
 
 ---
 
 ## How to Use
 
-### Open a File
+### Open a file
 
-- **Option 1**: `Ctrl+O` → Choose file
+- **Option 1**: `Ctrl + O` → Choose file
 - **Option 2**: Right-click file → **"Open with coding-puddle"**
 - **Option 3**: Drag file into the app window
-- **Option 4**: `coding-puddle.exe file.py` (command line)
+- **Option 4**: `coding-puddle.exe [file_name].py` (command line)
 
 ### Tear-off Tab
 
 - Click and hold a tab
 - Drag it outside the tab bar
-- → A new window appears with that file
+--> A new window appears with that file
 
 ### Auto-scroll
 
-- Middle-click anywhere in the editor → An anchor appears
-- Move mouse up/down → The page scrolls automatically
+- Middle-click anywhere in the editor --> An anchor appears
+- Move mouse up/down --> The page scrolls automatically
 - The further from the anchor, the faster it scrolls
 - Middle-click again to disable
 
 ### Register Context Menu
 
-- **Automatic**: Run the app once → it registers automatically
-- **Manual**: Help → Register 'Open with' Menu
-- **Remove**: Help → Unregister 'Open with' Menu
+- **Automatic**: Run the app once --> it registers automatically
+- **Manually**: Help → Register 'Open with' Menu
+- **Removing**: Help → Unregister 'Open with' Menu
 
 ---
 
-## Built With
+## Built with
 
 - **Python 3.14** — Programming language
 - **PyQt5** — GUI framework
@@ -150,11 +149,11 @@ py -m PyInstaller --onefile --windowed --name coding-puddle coding-puddle.py
 
 Contributions are welcome!
 
-1. Fork the repo
+1. Fork the repository
 2. Create a new branch (`git checkout -b feature/AmazingFeature`)
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+5. Open a Pull Request (PR)
 
 ---
 
@@ -198,7 +197,7 @@ If you find a bug, please create an [Issue](../../issues) with:
 
 ## License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for more details.
 
 You are free to:
 - Use commercially
