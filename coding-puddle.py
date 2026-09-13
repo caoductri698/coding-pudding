@@ -1652,7 +1652,7 @@ class ReplaceDialog(QDialog):
         super().__init__()
         self.text_area = text_area
         self.setWindowTitle("Replace")
-        self.setFixedSize(400, 240)
+        self.setFixedSize(400, 180)
         
         layout = QVBoxLayout()
         
