@@ -216,6 +216,15 @@ class CodeEditor(QTextEdit):
         char_format.setFontPointSize(self.font_size)
         self.setCurrentCharFormat(char_format)
     
+    def insertFromMimeData(self, source):
+        """Override paste to force plain text (no formatting)"""
+        if source.hasText():
+            text = source.text()
+            self.insertPlainText(text)
+            self.apply_font()
+        else:
+            super().insertFromMimeData(source)
+    
     def update_colors(self):
         if self.dark_mode:
             self.text_color = QColor(220, 220, 220)
@@ -249,6 +258,85 @@ class CodeEditor(QTextEdit):
     def toggle_dark_mode(self, dark_mode):
         self.dark_mode = dark_mode
         self.update_colors()
+    
+    def expand_bracket_pair(self, open_char, close_char):
+        """Expand empty bracket pair into multi-line structure"""
+        cursor = self.textCursor()
+        
+        cursor.movePosition(QTextCursor.StartOfLine)
+        cursor.movePosition(QTextCursor.EndOfLine, QTextCursor.KeepAnchor)
+        current_line = cursor.selectedText()
+        
+        base_indent = 0
+        for char in current_line:
+            if char == ' ':
+                base_indent += 1
+            else:
+                break
+        
+        cursor = self.textCursor()
+        pos = cursor.position()
+        open_pos = pos - 1
+        indent_str = ' ' * base_indent
+        inner_indent = ' ' * (base_indent + 4)
+        
+        cursor.setPosition(open_pos)
+        cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, 2)
+        cursor.removeSelectedText()
+        
+        new_text = f"{open_char}\n{inner_indent}\n{indent_str}{close_char}"
+        cursor.insertText(new_text)
+        
+        cursor.setPosition(open_pos + 1 + len(inner_indent))
+        self.setTextCursor(cursor)
+    
+    def trim_trailing_spaces(self):
+        """Remove trailing spaces from all lines"""
+        cursor = self.textCursor()
+        original_pos = cursor.position()
+        scroll_pos = self.verticalScrollBar().value()
+        
+        text = self.toPlainText()
+        lines = text.split('\n')
+        new_lines = [line.rstrip() for line in lines]
+        new_text = '\n'.join(new_lines)
+        
+        if new_text != text:
+            self.blockSignals(True)
+            self.setText(new_text)
+            self.blockSignals(False)
+            
+            doc_length = self.document().characterCount() - 1
+            new_pos = min(original_pos, doc_length)
+            cursor.setPosition(new_pos)
+            self.setTextCursor(cursor)
+            
+            self.verticalScrollBar().setValue(scroll_pos)
+            return True
+        return False
+    
+    def get_word_count(self):
+        """Get word count statistics"""
+        text = self.toPlainText()
+        
+        char_count = len(text)
+        char_count_no_space = len(text.replace(' ', '').replace('\t', '').replace('\n', ''))
+        
+        words = text.split()
+        word_count = len(words)
+        
+        line_count = text.count('\n') + 1 if text else 0
+        
+        paragraphs = [p for p in text.split('\n\n') if p.strip()]
+        paragraph_count = len(paragraphs)
+        
+        return {
+            'chars': char_count,
+            'chars_no_space': char_count_no_space,
+            'words': word_count,
+            'lines': line_count,
+            'paragraphs': paragraph_count
+        }
     
     # AUTO-SCROLL
     def start_auto_scroll(self, pos):
@@ -617,7 +705,23 @@ class CodeEditor(QTextEdit):
         return False
     
     def handle_enter_key(self):
+        """Handle Enter key with auto-indent + bracket expansion"""
         cursor = self.textCursor()
+        pos = cursor.position()
+        text = self.document().toPlainText()
+        
+        brackets = {'(': ')', '[': ']', '{': '}', '<': '>'}
+        
+        if pos > 0 and pos < len(text):
+            char_left = text[pos - 1]
+            char_right = text[pos]
+            
+            if char_left in brackets:
+                expected_close = brackets[char_left]
+                if char_right == expected_close:
+                    self.expand_bracket_pair(char_left, char_right)
+                    return
+        
         cursor.movePosition(QTextCursor.StartOfLine)
         cursor.movePosition(QTextCursor.EndOfLine, QTextCursor.KeepAnchor)
         current_line = cursor.selectedText()
@@ -1049,6 +1153,7 @@ class MyNotepad(QMainWindow):
                 QPushButton:hover { background-color: #4d4d4d; }
                 QCheckBox { color: #d4d4d4; }
                 QGroupBox { color: #d4d4d4; border: 1px solid #4d4d4d; }
+                QRadioButton { color: #d4d4d4; }
                 QTabWidget::pane { border: none; background-color: #1e1e1e; }
                 QTabBar::tab { background-color: #2d2d2d; color: #d4d4d4; padding: 6px 12px; border: 1px solid #3d3d3d; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
                 QTabBar::tab:selected { background-color: #1e1e1e; color: white; }
@@ -1069,6 +1174,7 @@ class MyNotepad(QMainWindow):
                 QPushButton:hover { background-color: #e0e0e0; }
                 QCheckBox { color: black; }
                 QGroupBox { color: black; border: 1px solid #ccc; }
+                QRadioButton { color: black; }
                 QTabWidget::pane { border: none; background-color: white; }
                 QTabBar::tab { background-color: #e0e0e0; color: black; padding: 6px 12px; border: 1px solid #ccc; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
                 QTabBar::tab:selected { background-color: white; color: black; }
@@ -1228,6 +1334,10 @@ class MyNotepad(QMainWindow):
         comment_action.triggered.connect(lambda: self.current_editor().toggle_comment() if self.current_editor() else None)
         edit_menu.addAction(comment_action)
         
+        trim_action = QAction("Trim Trailing Spaces", self)
+        trim_action.triggered.connect(lambda: self.current_editor().trim_trailing_spaces() if self.current_editor() else None)
+        edit_menu.addAction(trim_action)
+        
         # TAB
         tab_menu = menu_bar.addMenu("Tab")
         
@@ -1268,6 +1378,11 @@ class MyNotepad(QMainWindow):
         self.dark_mode_action.setChecked(False)
         self.dark_mode_action.triggered.connect(self.toggle_dark_mode)
         view_menu.addAction(self.dark_mode_action)
+        
+        word_count_action = QAction("Word Count", self)
+        word_count_action.setShortcut("Ctrl+Shift+W")
+        word_count_action.triggered.connect(self.show_word_count)
+        view_menu.addAction(word_count_action)
         
         # HELP
         help_menu = menu_bar.addMenu("Help")
@@ -1353,6 +1468,26 @@ class MyNotepad(QMainWindow):
             self.font_size = font.pointSize()
             self.apply_font()
     
+    def show_word_count(self):
+        editor = self.current_editor()
+        if not editor:
+            return
+        
+        stats = editor.get_word_count()
+        
+        QMessageBox.information(
+            self,
+            "Word Count",
+            f"<h3>Statistics</h3>"
+            f"<table>"
+            f"<tr><td><b>Characters:</b></td><td>{stats['chars']:,}</td></tr>"
+            f"<tr><td><b>Characters (no space):</b></td><td>{stats['chars_no_space']:,}</td></tr>"
+            f"<tr><td><b>Words:</b></td><td>{stats['words']:,}</td></tr>"
+            f"<tr><td><b>Lines:</b></td><td>{stats['lines']:,}</td></tr>"
+            f"<tr><td><b>Paragraphs:</b></td><td>{stats['paragraphs']:,}</td></tr>"
+            f"</table>"
+        )
+
     def toggle_status_bar(self, checked):
         self.status_bar.setVisible(checked)
     
@@ -1421,7 +1556,7 @@ class MyNotepad(QMainWindow):
 
 
 # ============================================================
-# DIALOGS (FIXED)
+# DIALOGS (FIXED - with Direction)
 # ============================================================
 
 class FindDialog(QDialog):
@@ -1446,10 +1581,24 @@ class FindDialog(QDialog):
         hbox2.addWidget(self.word_check)
         layout.addLayout(hbox2)
         
+        # Direction (Up/Down)
+        direction_group = QGroupBox("Direction")
+        direction_layout = QHBoxLayout()
+        
+        self.direction_down = QRadioButton("Down")
+        self.direction_down.setChecked(True)
+        direction_layout.addWidget(self.direction_down)
+        
+        self.direction_up = QRadioButton("Up")
+        direction_layout.addWidget(self.direction_up)
+        
+        direction_group.setLayout(direction_layout)
+        layout.addWidget(direction_group)
+        
         hbox3 = QHBoxLayout()
         find_next = QPushButton("Find Next")
         find_next.clicked.connect(self.on_find_next_clicked)
-        find_next.setDefault(True)  # ⭐ Enter sẽ trigger nút này
+        find_next.setDefault(True)
         hbox3.addWidget(find_next)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
@@ -1474,11 +1623,18 @@ class FindDialog(QDialog):
         if self.word_check.isChecked():
             flags |= QTextDocument.FindWholeWords
         
+        if self.direction_up.isChecked():
+            flags |= QTextDocument.FindBackward
+        
         new_cursor = self.text_area.document().find(text, cursor, flags)
         if not new_cursor.isNull():
             self.text_area.setTextCursor(new_cursor)
         else:
-            cursor.movePosition(QTextCursor.Start)
+            if self.direction_up.isChecked():
+                cursor.movePosition(QTextCursor.End)
+            else:
+                cursor.movePosition(QTextCursor.Start)
+            
             new_cursor = self.text_area.document().find(text, cursor, flags)
             if not new_cursor.isNull():
                 self.text_area.setTextCursor(new_cursor)
@@ -1496,7 +1652,7 @@ class ReplaceDialog(QDialog):
         super().__init__()
         self.text_area = text_area
         self.setWindowTitle("Replace")
-        self.setFixedSize(400, 200)
+        self.setFixedSize(400, 240)
         
         layout = QVBoxLayout()
         
@@ -1519,10 +1675,24 @@ class ReplaceDialog(QDialog):
         hbox3.addWidget(self.word_check)
         layout.addLayout(hbox3)
         
+        # Direction (Up/Down)
+        direction_group = QGroupBox("Direction")
+        direction_layout = QHBoxLayout()
+        
+        self.direction_down = QRadioButton("Down")
+        self.direction_down.setChecked(True)
+        direction_layout.addWidget(self.direction_down)
+        
+        self.direction_up = QRadioButton("Up")
+        direction_layout.addWidget(self.direction_up)
+        
+        direction_group.setLayout(direction_layout)
+        layout.addWidget(direction_group)
+        
         hbox4 = QHBoxLayout()
         find_btn = QPushButton("Find Next")
         find_btn.clicked.connect(self.on_find_next_clicked)
-        find_btn.setDefault(True)  # ⭐ Enter sẽ trigger nút này
+        find_btn.setDefault(True)
         hbox4.addWidget(find_btn)
         replace_btn = QPushButton("Replace")
         replace_btn.clicked.connect(self.replace)
@@ -1553,11 +1723,18 @@ class ReplaceDialog(QDialog):
         if self.word_check.isChecked():
             flags |= QTextDocument.FindWholeWords
         
+        if self.direction_up.isChecked():
+            flags |= QTextDocument.FindBackward
+        
         new_cursor = self.text_area.document().find(text, cursor, flags)
         if not new_cursor.isNull():
             self.text_area.setTextCursor(new_cursor)
         else:
-            cursor.movePosition(QTextCursor.Start)
+            if self.direction_up.isChecked():
+                cursor.movePosition(QTextCursor.End)
+            else:
+                cursor.movePosition(QTextCursor.Start)
+            
             new_cursor = self.text_area.document().find(text, cursor, flags)
             if not new_cursor.isNull():
                 self.text_area.setTextCursor(new_cursor)
@@ -1637,14 +1814,12 @@ class GotoDialog(QDialog):
         hbox = QHBoxLayout()
         hbox.addWidget(QLabel("Line number:"))
         self.line_input = QLineEdit()
-        # ⭐ CHỈ GIỮ returnPressed (nhấn Enter)
         self.line_input.returnPressed.connect(self.go_to_line)
         hbox.addWidget(self.line_input)
         layout.addLayout(hbox)
         
         hbox2 = QHBoxLayout()
         go_btn = QPushButton("Go To")
-        # ⭐ Nút chỉ focus vào input (không gọi go_to_line)
         go_btn.clicked.connect(self.line_input.setFocus)
         hbox2.addWidget(go_btn)
         close_btn = QPushButton("Close")
