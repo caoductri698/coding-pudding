@@ -14,6 +14,10 @@
 
 <p align="center">
   <img src="screenshots/go_to.PNG" width="45%" />
+  <img src="screenshots/word_count.PNG" width="45%" />
+</p>
+
+<p align="center">
   <img src="screenshots/tabs.PNG" width="45%" />
 </p>
 
