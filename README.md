@@ -107,7 +107,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Ctrl + /` | Toggle comment |
 | `Ctrl + Tab` | Next tab |
 | `Ctrl + Shift + Tab` | Previous tab |
-| `F5`/`Fn + F5` | Time/Date |
+| `F5` or `Fn + F5` | Time/Date |
 | `Tab` | 1 indentation (line start)/4 spaces |
 | `Shift + Tab` | Unindent |
 | `Ctrl + Shift + W` | Word count |
