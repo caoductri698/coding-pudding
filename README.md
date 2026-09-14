@@ -61,11 +61,14 @@ py coding-pudding.py
 ### Option 3: Build coding-pudding.exe by yourself
 
 ```bash
+# Clone repository
+git clone https://github.com/caoductri698/coding-pudding.git
+
 # Install PyInstaller
 pip install pyinstaller
 
 # Build
-py -m PyInstaller --onefile --windowed --name coding-pudding coding-pudding.py
+py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." --name coding-pudding coding-pudding.py
 
 # File .exe is ready in dist/coding-pudding.exe
 ```
@@ -113,7 +116,6 @@ py -m PyInstaller --onefile --windowed --name coding-pudding coding-pudding.py
 - **Option 1**: `Ctrl + O` --> Choose file
 - **Option 2**: Right-click file --> **"Open with coding-pudding"**
 - **Option 3**: Drag file into the app window
-- **Option 4**: `coding-pudding.exe [file_name].py` (command line)
 
 ### Tear-off tab
 

@@ -14,6 +14,14 @@ from PyQt5.QtGui import (QFont, QColor, QTextCursor, QKeySequence, QIcon,
                          QTextDocument, QPainter, QTextFormat, QCursor,
                          QTextCharFormat)
 
+def resource_path(relative_path):
+    """Get absolute path to resource"""
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 
 try:
     import winreg
@@ -30,7 +38,7 @@ def is_registered(exe_path):
     if not HAS_WINREG:
         return False
     try:
-        key_path = r"Software\Classes\*\shell\coding-pad\command"
+        key_path = r"Software\Classes\*\shell\coding-pudding\command"
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
             value, _ = winreg.QueryValueEx(key, "")
             return exe_path.lower() in value.lower()
@@ -45,9 +53,9 @@ def register_context_menu(exe_path):
         return False
     
     registry_entries = [
-        (r"*\shell\coding-pad", "Open with coding-pad", exe_path, f'"{exe_path}" "%1"'),
-        (r"Directory\shell\coding-pad", "Open with coding-pad", exe_path, f'"{exe_path}" "%1"'),
-        (r"Directory\Background\shell\coding-pad", "Open with coding-pad", exe_path, f'"{exe_path}" "%V"'),
+        (r"*\shell\coding-pudding", "Open with coding-pudding", exe_path, f'"{exe_path}" "%1"'),
+        (r"Directory\shell\coding-pudding", "Open with coding-pudding", exe_path, f'"{exe_path}" "%1"'),
+        (r"Directory\Background\shell\coding-pudding", "Open with coding-pudding", exe_path, f'"{exe_path}" "%V"'),
     ]
     
     base_key = winreg.HKEY_CURRENT_USER
@@ -73,9 +81,9 @@ def unregister_context_menu():
         return False
     
     registry_entries = [
-        r"*\shell\coding-pad",
-        r"Directory\shell\coding-pad",
-        r"Directory\Background\shell\coding-pad",
+        r"*\shell\coding-pudding",
+        r"Directory\shell\coding-pudding",
+        r"Directory\Background\shell\coding-pudding",
     ]
     
     base_key = winreg.HKEY_CURRENT_USER
@@ -516,7 +524,7 @@ class CodeEditor(QTextEdit):
         MAX_SPEED = 40
         
         distance = abs(dy) - DEAD_ZONE
-        speed_ratio = min(distance / MAX_DISTANCE, 1.0)
+        speed_ratio = min(distance / MAX_DISTANCE, 3.0)
         speed = int(speed_ratio * MAX_SPEED) + 2
         
         if dy < 0:
@@ -958,6 +966,8 @@ class MyNotepad(QMainWindow):
         self.setWindowTitle("coding-pudding.exe")
         self.setGeometry(100, 100, 1000, 800)
         
+        self.setWindowIcon(QIcon(resource_path("icon.ico")))
+        
         self.dark_mode = False
         self.font_family = "Consolas"
         self.font_size = 14
@@ -1049,7 +1059,7 @@ class MyNotepad(QMainWindow):
         new_window.show()
     
     def load_settings(self):
-        settings = QSettings("coding-pad", "coding-pad")
+        settings = QSettings("coding-pudding", "coding-pudding")
         geometry = settings.value("geometry")
         if geometry:
             self.restoreGeometry(geometry)
@@ -1067,7 +1077,7 @@ class MyNotepad(QMainWindow):
                 self.dark_mode_action.setChecked(True)
     
     def save_settings(self):
-        settings = QSettings("coding-pad", "coding-pad")
+        settings = QSettings("coding-pudding", "coding-pudding")
         settings.setValue("geometry", self.saveGeometry())
         settings.setValue("windowState", self.saveState())
         settings.setValue("dark_mode", self.dark_mode)
@@ -1516,7 +1526,7 @@ class MyNotepad(QMainWindow):
         
         help_menu.addSeparator()
         
-        about_action = QAction("About coding-pad", self)
+        about_action = QAction("About coding-pudding", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
     
@@ -1528,22 +1538,22 @@ class MyNotepad(QMainWindow):
         exe_path = sys.executable
         if register_context_menu(exe_path):
             QMessageBox.information(self, "Success", 
-                f"Registered 'Open with coding-pad' for:\n{exe_path}")
+                f"Registered 'Open with coding-pudding' for:\n{exe_path}")
         else:
             QMessageBox.critical(self, "Error", "Failed to register context menu.")
     
     def manual_unregister(self):
         if unregister_context_menu():
             QMessageBox.information(self, "Success", 
-                "Unregistered 'Open with coding-pad' menu.")
+                "Unregistered 'Open with coding-pudding' menu.")
         else:
             QMessageBox.critical(self, "Error", "Failed to unregister context menu.")
     
     def show_about(self):
-        QMessageBox.about(self, "About coding-pad",
+        QMessageBox.about(self, "About coding-pudding",
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
-            "<p><b>Version:</b> 1.0</p>"
+            "<p><b>Version:</b> 3.0</p>"
             "<p><b>RAM:</b> ~30MB</p>"
             "<p><b>License:</b> MIT</p>")
     
@@ -1979,9 +1989,16 @@ class GotoDialog(QDialog):
 # ============================================================
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = MyNotepad()
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "coding.pudding.app.1"
+        )
     
+    app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(resource_path("icon.ico")))
+    
+    window = MyNotepad()
     auto_register_context_menu()
     
     if len(sys.argv) > 1:
