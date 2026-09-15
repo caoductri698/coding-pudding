@@ -38,6 +38,7 @@
 - **Automatically saving settings** — Remembers your theme (dark/light) and window size.
 - **"Open with coding-pudding"** — Right-click any file to open it directly.
 - **Word counting** - Press `Ctrl + Shift + W` at the same time to open `Word Count` dialog.
+- **Horizontal scrolling** - Press `Shift + Scroll` to do horizontal scroll.
 
 ---
 
