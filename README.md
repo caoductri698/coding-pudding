@@ -111,6 +111,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Tab` | 1 indentation (line start)/4 spaces |
 | `Shift + Tab` | Unindent |
 | `Ctrl + Shift + W` | Word count |
+| `Shift + Scroll` | Horizontal scrolling |
 
 ---
 
