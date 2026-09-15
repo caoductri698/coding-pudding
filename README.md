@@ -58,7 +58,7 @@ git clone https://github.com/caoductri698/coding-pudding.git
 cd coding-pudding
 
 # Install dependencies
-pip install PyQt5
+py -m pip install PyQt5
 
 # Run app
 py coding-pudding.py
@@ -71,7 +71,7 @@ py coding-pudding.py
 git clone https://github.com/caoductri698/coding-pudding.git
 
 # Install PyInstaller
-pip install pyinstaller
+py -m pip install pyinstaller
 
 # Build
 py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." --name coding-pudding coding-pudding.py
