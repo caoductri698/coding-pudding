@@ -14,6 +14,7 @@ from PyQt5.QtGui import (QFont, QColor, QTextCursor, QKeySequence, QIcon,
                          QTextDocument, QPainter, QTextFormat, QCursor,
                          QTextCharFormat)
 
+
 def resource_path(relative_path):
     """Get absolute path to resource"""
     try:
@@ -217,6 +218,31 @@ class CodeEditor(QTextEdit):
         
         self.installEventFilter(self)
         self.update_line_number_area()
+    
+    # ============ DRAG & DROP: FORWARD FILE DROP TO MAIN WINDOW ============
+    def dragEnterEvent(self, event):
+        """Forward file drag to main window instead of handling as text"""
+        if event.mimeData().hasUrls():
+            event.ignore()
+        else:
+            super().dragEnterEvent(event)
+    
+    def dragMoveEvent(self, event):
+        """Forward file drag to main window"""
+        if event.mimeData().hasUrls():
+            event.ignore()
+        else:
+            super().dragMoveEvent(event)
+    
+    def dropEvent(self, event):
+        """Forward file drop to main window (open as new tab)"""
+        if event.mimeData().hasUrls():
+            main_window = self.window()
+            if hasattr(main_window, 'dropEvent'):
+                main_window.dropEvent(event)
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)
     
     def apply_font(self):
         font = QFont(self.font_family, self.font_size)
@@ -560,6 +586,30 @@ class CodeEditor(QTextEdit):
     def wheelEvent(self, event):
         if self.auto_scroll_active:
             self.stop_auto_scroll()
+        
+        # Shift + wheel → horizontal scroll (same speed as vertical)
+        if event.modifiers() & Qt.ShiftModifier:
+            delta = event.angleDelta().y()
+            if delta == 0:
+                delta = event.angleDelta().x()
+            
+            # Number of "notch" (1 notch = 120 units)
+            num_degrees = delta / 8.0
+            num_steps = num_degrees / 15.0
+            
+            scroll_lines = QApplication.wheelScrollLines()
+            if scroll_lines == -1:
+                scroll_lines = self.viewport().height() // self.fontMetrics().height()
+            
+            char_width = self.fontMetrics().horizontalAdvance(' ')
+            
+            scroll_amount = int(num_steps * scroll_lines * char_width)
+            
+            h_scrollbar = self.horizontalScrollBar()
+            h_scrollbar.setValue(h_scrollbar.value() - scroll_amount)
+            event.accept()
+            return
+        
         super().wheelEvent(event)
     
     # ============ INDENT / UNINDENT ============
@@ -967,6 +1017,9 @@ class MyNotepad(QMainWindow):
         self.setGeometry(100, 100, 1000, 800)
         
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
+        
+        # Enable drag & drop on the main window
+        self.setAcceptDrops(True)
         
         self.dark_mode = False
         self.font_family = "Consolas"
@@ -1682,10 +1735,60 @@ class MyNotepad(QMainWindow):
                     event.ignore()
                     return
         event.accept()
+    
+    # ============ DRAG & DROP: OPEN DROPPED FILES ============
+    def dragEnterEvent(self, event):
+        """Accept drag event if it contains file URLs"""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+    
+    def dragMoveEvent(self, event):
+        """Keep accepting drag move while over the window"""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+    
+    def dropEvent(self, event):
+        """Handle file drop: open each dropped file in a new tab"""
+        if not event.mimeData().hasUrls():
+            super().dropEvent(event)
+            return
+        
+        event.acceptProposedAction()
+        
+        errors = []
+        
+        for url in event.mimeData().urls():
+            if not url.isLocalFile():
+                continue
+            
+            file_path = url.toLocalFile()
+            
+            if not os.path.isfile(file_path):
+                continue
+            
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self.add_new_tab(file_path, content)
+                self.apply_font()
+            except UnicodeDecodeError:
+                errors.append(f"{os.path.basename(file_path)}: binary or non-UTF-8 file")
+            except Exception as e:
+                errors.append(f"{os.path.basename(file_path)}: {str(e)}")
+        
+        if errors:
+            QMessageBox.warning(
+                self, "File could not be opened",
+                "The following files could not be opened:\n\n" + "\n".join(errors)
+            )
 
 
 # ============================================================
-# DIALOGS (FIXED - with Direction)
+# DIALOGS (with direction)
 # ============================================================
 
 class FindDialog(QDialog):
