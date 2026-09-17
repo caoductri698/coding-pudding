@@ -7,12 +7,13 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QTextEdit,
                              QStatusBar, QLabel, QFontDialog, QColorDialog,
                              QDialog, QVBoxLayout, QLineEdit, QPushButton,
                              QCheckBox, QGroupBox, QHBoxLayout, QRadioButton,
-                             QButtonGroup, QWidget, QHBoxLayout, QListWidget,
-                             QListWidgetItem, QAbstractItemView, QTabWidget)
+                             QButtonGroup, QWidget, QListWidget,
+                             QListWidgetItem, QAbstractItemView, QTabWidget,
+                             QSpinBox, QComboBox)
 from PyQt5.QtCore import Qt, QTimer, QRect, QPoint, QSettings
 from PyQt5.QtGui import (QFont, QColor, QTextCursor, QKeySequence, QIcon, 
                          QTextDocument, QPainter, QTextFormat, QCursor,
-                         QTextCharFormat)
+                         QTextCharFormat, QFontDatabase)
 
 
 def resource_path(relative_path):
@@ -346,7 +347,7 @@ class CodeEditor(QTextEdit):
             if char_left in brackets:
                 expected_close = brackets[char_left]
                 if char_right == expected_close:
-                    # Empty bracket pair → delete both
+                    # Empty bracket pair -> delete both
                     cursor.setPosition(pos - 1)
                     cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, 2)
                     cursor.removeSelectedText()
@@ -587,13 +588,12 @@ class CodeEditor(QTextEdit):
         if self.auto_scroll_active:
             self.stop_auto_scroll()
         
-        # Shift + wheel → horizontal scroll (same speed as vertical)
+        # Shift + wheel -> horizontal scroll (same speed as vertical)
         if event.modifiers() & Qt.ShiftModifier:
             delta = event.angleDelta().y()
             if delta == 0:
                 delta = event.angleDelta().x()
             
-            # Number of "notch" (1 notch = 120 units)
             num_degrees = delta / 8.0
             num_steps = num_degrees / 15.0
             
@@ -602,7 +602,6 @@ class CodeEditor(QTextEdit):
                 scroll_lines = self.viewport().height() // self.fontMetrics().height()
             
             char_width = self.fontMetrics().horizontalAdvance(' ')
-            
             scroll_amount = int(num_steps * scroll_lines * char_width)
             
             h_scrollbar = self.horizontalScrollBar()
@@ -1007,6 +1006,294 @@ class CustomTabWidget(QTabWidget):
 
 
 # ============================================================
+# SETTINGS DIALOG
+# ============================================================
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent_notepad):
+        super().__init__(parent_notepad)
+        self.parent_notepad = parent_notepad
+        self.setWindowTitle("Settings")
+        self.setFixedSize(480, 540)
+        self.setModal(True)
+        
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+        
+        # ============ EDITOR SECTION ============
+        editor_group = QGroupBox("Editor")
+        editor_layout = QVBoxLayout()
+        
+        # Font family - curated list of monospace fonts
+        font_row = QHBoxLayout()
+        font_row.addWidget(QLabel("Font:"))
+        self.font_combo = QComboBox()
+        
+        # Danh sach font code pho bien (chi hien font nao may co)
+        CODE_FONTS = [
+            "Consolas",
+            "JetBrains Mono",
+            "Fira Code",
+            "Cascadia Code",
+            "Source Code Pro",
+            "IBM Plex Mono",
+            "Hack",
+            "Roboto Mono",
+            "Inconsolata",
+            "Menlo",
+            "SF Mono",
+            "Ubuntu Mono",
+            "Anonymous Pro",
+            "Input Mono",
+            "Iosevka",
+            "Monoid",
+            "Cascadia Mono",
+            "Courier New",
+        ]
+        
+        available = QFontDatabase().families()
+        current_family = parent_notepad.font_family
+        added = set()
+        
+        for font_name in CODE_FONTS:
+            if font_name in available:
+                self.font_combo.addItem(font_name)
+                added.add(font_name)
+        
+        if current_family not in added:
+            self.font_combo.addItem(current_family)
+        
+        idx = self.font_combo.findText(current_family)
+        if idx >= 0:
+            self.font_combo.setCurrentIndex(idx)
+        
+        self.font_combo.currentTextChanged.connect(self.update_preview)
+        font_row.addWidget(self.font_combo, 1)
+        editor_layout.addLayout(font_row)
+        
+        # Hint duoi dropdown font
+        hint_label = QLabel("Tip: install JetBrains Mono or Fira Code for a better experience")
+        hint_label.setStyleSheet("color: gray; font-size: 9pt; font-style: italic;")
+        editor_layout.addWidget(hint_label)
+        
+        # Font size
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("Font size:"))
+        self.size_spin = QSpinBox()
+        self.size_spin.setRange(6, 72)
+        self.size_spin.setValue(parent_notepad.font_size)
+        self.size_spin.setSuffix(" pt")
+        self.size_spin.valueChanged.connect(self.update_preview)
+        size_row.addWidget(self.size_spin)
+        size_row.addStretch()
+        editor_layout.addLayout(size_row)
+        
+        # Preview
+        editor_layout.addWidget(QLabel("Preview:"))
+        self.preview = QLabel("def hello():\n    print(\"Hello, world!\")")
+        self.preview.setMinimumHeight(60)
+        editor_layout.addWidget(self.preview)
+        
+        editor_group.setLayout(editor_layout)
+        layout.addWidget(editor_group)
+        
+        # ============ APPEARANCE SECTION ============
+        appearance_group = QGroupBox("Appearance")
+        appearance_layout = QVBoxLayout()
+        
+        self.light_radio = QRadioButton("Light Mode")
+        self.dark_radio = QRadioButton("Dark Mode")
+        
+        if parent_notepad.dark_mode:
+            self.dark_radio.setChecked(True)
+        else:
+            self.light_radio.setChecked(True)
+        
+        self.light_radio.toggled.connect(self.update_preview)
+        self.dark_radio.toggled.connect(self.update_preview)
+        
+        appearance_layout.addWidget(self.light_radio)
+        appearance_layout.addWidget(self.dark_radio)
+        
+        appearance_group.setLayout(appearance_layout)
+        layout.addWidget(appearance_group)
+        
+        # ============ EDITOR BEHAVIOR ============
+        behavior_group = QGroupBox("Editor Behavior")
+        behavior_layout = QVBoxLayout()
+        
+        self.wrap_check = QCheckBox("Word wrap")
+        self.wrap_check.setChecked(parent_notepad.word_wrap)
+        
+        self.linenum_check = QCheckBox("Show line numbers")
+        self.linenum_check.setChecked(parent_notepad.show_line_numbers)
+        
+        self.trim_check = QCheckBox("Trim trailing spaces on save")
+        self.trim_check.setChecked(parent_notepad.trim_on_save)
+        
+        behavior_layout.addWidget(self.wrap_check)
+        behavior_layout.addWidget(self.linenum_check)
+        behavior_layout.addWidget(self.trim_check)
+        
+        behavior_group.setLayout(behavior_layout)
+        layout.addWidget(behavior_group)
+        
+        layout.addStretch()
+        
+        # ============ BUTTONS ============
+        button_row = QHBoxLayout()
+        
+        reset_btn = QPushButton("Reset to Default")
+        reset_btn.clicked.connect(self.reset_defaults)
+        button_row.addWidget(reset_btn)
+        
+        button_row.addStretch()
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        
+        ok_btn = QPushButton("OK")
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self.apply_settings)
+        button_row.addWidget(ok_btn)
+        
+        layout.addLayout(button_row)
+        
+        self.setLayout(layout)
+        
+        # ============ DIRTY TRACKING ============
+        self._dirty = False
+        self._suppress_dirty = False
+        
+        # Connect all controls to mark as dirty
+        self.font_combo.currentTextChanged.connect(self._mark_dirty)
+        self.size_spin.valueChanged.connect(self._mark_dirty)
+        self.light_radio.toggled.connect(self._mark_dirty)
+        self.dark_radio.toggled.connect(self._mark_dirty)
+        self.wrap_check.toggled.connect(self._mark_dirty)
+        self.linenum_check.toggled.connect(self._mark_dirty)
+        self.trim_check.toggled.connect(self._mark_dirty)
+        
+        self.update_preview()
+    
+    def _mark_dirty(self):
+        """Mark dialog as having unsaved changes"""
+        if not self._suppress_dirty:
+            self._dirty = True
+    
+    def update_preview(self):
+        """Update preview when font/theme changes"""
+        font = QFont(self.font_combo.currentText())
+        font.setPointSize(self.size_spin.value())
+        self.preview.setFont(font)
+        
+        if self.dark_radio.isChecked():
+            self.preview.setStyleSheet(
+                "background-color: #1e1e1e; color: #d4d4d4; "
+                "border: 1px solid #3d3d3d; padding: 8px;"
+            )
+        else:
+            self.preview.setStyleSheet(
+                "background-color: white; color: black; "
+                "border: 1px solid #ccc; padding: 8px;"
+            )
+    
+    def reset_defaults(self):
+        """Reset all settings to default values"""
+        self._suppress_dirty = True
+        
+        idx = self.font_combo.findText("Consolas")
+        if idx >= 0:
+            self.font_combo.setCurrentIndex(idx)
+        self.size_spin.setValue(14)
+        self.light_radio.setChecked(True)
+        self.wrap_check.setChecked(False)
+        self.linenum_check.setChecked(True)
+        self.trim_check.setChecked(False)
+        self.update_preview()
+        
+        self._suppress_dirty = False
+        self._dirty = True  # Van coi la dirty vi user chua apply
+    
+    def apply_settings(self):
+        """Apply settings to main window"""
+        # Font
+        self.parent_notepad.font_family = self.font_combo.currentText()
+        self.parent_notepad.font_size = self.size_spin.value()
+        self.parent_notepad.apply_font()
+        
+        # Dark mode
+        new_dark = self.dark_radio.isChecked()
+        if new_dark != self.parent_notepad.dark_mode:
+            self.parent_notepad.toggle_dark_mode(new_dark)
+        
+        # Behavior - save to parent
+        self.parent_notepad.word_wrap = self.wrap_check.isChecked()
+        self.parent_notepad.show_line_numbers = self.linenum_check.isChecked()
+        self.parent_notepad.trim_on_save = self.trim_check.isChecked()
+        
+        # Apply word wrap
+        self.parent_notepad.toggle_word_wrap(self.parent_notepad.word_wrap)
+        
+        # Apply line numbers
+        show_numbers = self.parent_notepad.show_line_numbers
+        for tab in self.parent_notepad.tabs:
+            if isinstance(tab.editor, CodeEditor):
+                tab.editor.line_number_area.setVisible(show_numbers)
+                if show_numbers:
+                    tab.editor.setViewportMargins(50, 0, 0, 0)
+                else:
+                    tab.editor.setViewportMargins(0, 0, 0, 0)
+        
+        # Save to QSettings
+        self.parent_notepad.save_settings()
+        
+        # Reset dirty flag
+        self._dirty = False
+        
+        self.accept()
+    
+    def reject(self):
+        """Called when user closes dialog without clicking OK"""
+        if self._dirty:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Unsaved Changes")
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setText("You have unsaved changes in Settings.")
+            msg_box.setInformativeText(
+                "Do you want to apply them before closing?"
+            )
+            msg_box.setStandardButtons(
+                QMessageBox.Cancel | QMessageBox.Discard | QMessageBox.Save
+            )
+            msg_box.setDefaultButton(QMessageBox.Save)
+            
+            # Doi label nut cho ro nghia (dung && de hien thi &)
+            msg_box.button(QMessageBox.Save).setText("Apply && Close")
+            msg_box.button(QMessageBox.Discard).setText("Discard Changes")
+            msg_box.button(QMessageBox.Cancel).setText("Keep Editing")
+            
+            reply = msg_box.exec_()
+            
+            if reply == QMessageBox.Save:
+                # Apply roi dong
+                self.apply_settings()
+                return
+            elif reply == QMessageBox.Discard:
+                # Bo thay doi, dong luon
+                self._dirty = False
+                super().reject()
+                return
+            else:  # Cancel
+                # Khong lam gi, giu dialog mo
+                return
+        
+        # Khong co thay doi -> dong binh thuong
+        super().reject()
+
+
+# ============================================================
 # MAIN NOTEPAD
 # ============================================================
 
@@ -1024,6 +1311,9 @@ class MyNotepad(QMainWindow):
         self.dark_mode = False
         self.font_family = "Consolas"
         self.font_size = 14
+        self.word_wrap = False
+        self.show_line_numbers = True
+        self.trim_on_save = False
         self.tabs = []
         
         self.dragging_tab = False
@@ -1119,6 +1409,8 @@ class MyNotepad(QMainWindow):
         state = settings.value("windowState")
         if state:
             self.restoreState(state)
+        
+        # Load dark mode
         dark_mode = settings.value("dark_mode", False, type=bool)
         if dark_mode:
             self.dark_mode = True
@@ -1126,14 +1418,41 @@ class MyNotepad(QMainWindow):
                 tab.editor.dark_mode = True
                 tab.editor.update_colors()
             self.apply_theme()
-            if hasattr(self, 'dark_mode_action'):
-                self.dark_mode_action.setChecked(True)
+        
+        # Load font settings
+        font_family = settings.value("font_family", "Consolas", type=str)
+        font_size = settings.value("font_size", 14, type=int)
+        if font_family:
+            self.font_family = font_family
+        if font_size:
+            self.font_size = int(font_size)
+        self.apply_font()
+        
+        # Load behavior settings
+        self.word_wrap = settings.value("word_wrap", False, type=bool)
+        self.show_line_numbers = settings.value("show_line_numbers", True, type=bool)
+        self.trim_on_save = settings.value("trim_on_save", False, type=bool)
+        
+        # Apply behavior
+        self.toggle_word_wrap(self.word_wrap)
+        for tab in self.tabs:
+            if isinstance(tab.editor, CodeEditor):
+                tab.editor.line_number_area.setVisible(self.show_line_numbers)
+                if self.show_line_numbers:
+                    tab.editor.setViewportMargins(50, 0, 0, 0)
+                else:
+                    tab.editor.setViewportMargins(0, 0, 0, 0)
     
     def save_settings(self):
         settings = QSettings("coding-pudding", "coding-pudding")
         settings.setValue("geometry", self.saveGeometry())
         settings.setValue("windowState", self.saveState())
         settings.setValue("dark_mode", self.dark_mode)
+        settings.setValue("font_family", self.font_family)
+        settings.setValue("font_size", self.font_size)
+        settings.setValue("word_wrap", self.word_wrap)
+        settings.setValue("show_line_numbers", self.show_line_numbers)
+        settings.setValue("trim_on_save", self.trim_on_save)
     
     def current_editor(self):
         return self.tab_widget.currentWidget()
@@ -1149,6 +1468,21 @@ class MyNotepad(QMainWindow):
         editor.font_family = self.font_family
         editor.font_size = self.font_size
         editor.apply_font()
+        
+        # Apply line numbers setting
+        editor.line_number_area.setVisible(self.show_line_numbers)
+        if self.show_line_numbers:
+            editor.setViewportMargins(50, 0, 0, 0)
+        else:
+            editor.setViewportMargins(0, 0, 0, 0)
+        
+        # Apply word wrap
+        if self.word_wrap:
+            editor.setLineWrapMode(QTextEdit.WidgetWidth)
+            editor.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        else:
+            editor.setLineWrapMode(QTextEdit.NoWrap)
+            editor.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
         editor.cursorPositionChanged.connect(self.update_cursor_position)
         editor.textChanged.connect(self.on_text_changed)
@@ -1221,6 +1555,11 @@ class MyNotepad(QMainWindow):
         if index < 0 or index >= len(self.tabs):
             return False
         tab = self.tabs[index]
+        
+        # Trim trailing spaces before saving if enabled
+        if self.trim_on_save:
+            tab.editor.trim_trailing_spaces()
+        
         if tab.file_path:
             try:
                 content = tab.editor.toPlainText()
@@ -1241,6 +1580,11 @@ class MyNotepad(QMainWindow):
         if index < 0 or index >= len(self.tabs):
             return False
         tab = self.tabs[index]
+        
+        # Trim trailing spaces before saving if enabled
+        if self.trim_on_save:
+            tab.editor.trim_trailing_spaces()
+        
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save File", "",
             "Python Files (*.py);;Text Files (*.txt);;All Files (*)"
@@ -1334,12 +1678,16 @@ class MyNotepad(QMainWindow):
                 QPushButton { background-color: #3d3d3d; color: #d4d4d4; border: 1px solid #4d4d4d; padding: 5px 10px; }
                 QPushButton:hover { background-color: #4d4d4d; }
                 QCheckBox { color: #d4d4d4; }
-                QGroupBox { color: #d4d4d4; border: 1px solid #4d4d4d; }
+                QGroupBox { color: #d4d4d4; border: 1px solid #4d4d4d; margin-top: 8px; }
+                QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
                 QRadioButton { color: #d4d4d4; }
                 QTabWidget::pane { border: none; background-color: #1e1e1e; }
                 QTabBar::tab { background-color: #2d2d2d; color: #d4d4d4; padding: 6px 12px; border: 1px solid #3d3d3d; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
                 QTabBar::tab:selected { background-color: #1e1e1e; color: white; }
                 QTabBar::tab:hover { background-color: #3d3d3d; }
+                QComboBox { background-color: #3d3d3d; color: #d4d4d4; border: 1px solid #4d4d4d; padding: 3px; }
+                QComboBox QAbstractItemView { background-color: #2d2d2d; color: #d4d4d4; selection-background-color: #3d3d3d; }
+                QSpinBox { background-color: #3d3d3d; color: #d4d4d4; border: 1px solid #4d4d4d; padding: 3px; }
             """)
         else:
             self.setStyleSheet("""
@@ -1355,12 +1703,16 @@ class MyNotepad(QMainWindow):
                 QPushButton { background-color: #f0f0f0; color: black; border: 1px solid #ccc; padding: 5px 10px; }
                 QPushButton:hover { background-color: #e0e0e0; }
                 QCheckBox { color: black; }
-                QGroupBox { color: black; border: 1px solid #ccc; }
+                QGroupBox { color: black; border: 1px solid #ccc; margin-top: 8px; }
+                QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
                 QRadioButton { color: black; }
                 QTabWidget::pane { border: none; background-color: white; }
                 QTabBar::tab { background-color: #e0e0e0; color: black; padding: 6px 12px; border: 1px solid #ccc; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
                 QTabBar::tab:selected { background-color: white; color: black; }
                 QTabBar::tab:hover { background-color: #f0f0f0; }
+                QComboBox { background-color: white; color: black; border: 1px solid #ccc; padding: 3px; }
+                QComboBox QAbstractItemView { background-color: white; color: black; selection-background-color: #e0e0e0; }
+                QSpinBox { background-color: white; color: black; border: 1px solid #ccc; padding: 3px; }
             """)
         self.update_status_bar_style()
     
@@ -1538,13 +1890,9 @@ class MyNotepad(QMainWindow):
         
         word_wrap_action = QAction("Word Wrap", self)
         word_wrap_action.setCheckable(True)
-        word_wrap_action.setChecked(False)
+        word_wrap_action.setChecked(self.word_wrap)
         word_wrap_action.triggered.connect(self.toggle_word_wrap)
         format_menu.addAction(word_wrap_action)
-        
-        font_action = QAction("Font...", self)
-        font_action.triggered.connect(self.choose_font)
-        format_menu.addAction(font_action)
         
         # VIEW
         view_menu = menu_bar.addMenu("View")
@@ -1555,16 +1903,16 @@ class MyNotepad(QMainWindow):
         status_bar_action.triggered.connect(self.toggle_status_bar)
         view_menu.addAction(status_bar_action)
         
-        self.dark_mode_action = QAction("Dark Mode", self)
-        self.dark_mode_action.setCheckable(True)
-        self.dark_mode_action.setChecked(False)
-        self.dark_mode_action.triggered.connect(self.toggle_dark_mode)
-        view_menu.addAction(self.dark_mode_action)
-        
         word_count_action = QAction("Word Count", self)
         word_count_action.setShortcut("Ctrl+Shift+W")
         word_count_action.triggered.connect(self.show_word_count)
         view_menu.addAction(word_count_action)
+        
+        # SETTINGS - placed directly on menu bar (click opens dialog instantly)
+        settings_action = QAction("Settings", self)
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.triggered.connect(self.show_settings)
+        menu_bar.addAction(settings_action)
         
         # HELP
         help_menu = menu_bar.addMenu("Help")
@@ -1582,6 +1930,11 @@ class MyNotepad(QMainWindow):
         about_action = QAction("About coding-pudding", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+    
+    def show_settings(self):
+        """Open Settings dialog"""
+        dialog = SettingsDialog(self)
+        dialog.exec_()
     
     def manual_register(self):
         if not getattr(sys, 'frozen', False):
@@ -1606,7 +1959,7 @@ class MyNotepad(QMainWindow):
         QMessageBox.about(self, "About coding-pudding",
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
-            "<p><b>Version:</b> 3.0</p>"
+            "<p><b>Version:</b> 5.0</p>"
             "<p><b>RAM:</b> ~30MB</p>"
             "<p><b>License:</b> MIT</p>")
     
@@ -1632,6 +1985,7 @@ class MyNotepad(QMainWindow):
             cursor.insertText(now.strftime("%I:%M %p %m/%d/%Y"))
     
     def toggle_word_wrap(self, checked):
+        self.word_wrap = checked
         for tab in self.tabs:
             if checked:
                 tab.editor.setLineWrapMode(QTextEdit.WidgetWidth)
@@ -1639,16 +1993,6 @@ class MyNotepad(QMainWindow):
             else:
                 tab.editor.setLineWrapMode(QTextEdit.NoWrap)
                 tab.editor.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-    
-    def choose_font(self):
-        editor = self.current_editor()
-        if not editor:
-            return
-        font, ok = QFontDialog.getFont(editor.font(), self, "Choose Font")
-        if ok:
-            self.font_family = font.family()
-            self.font_size = font.pointSize()
-            self.apply_font()
     
     def show_word_count(self):
         editor = self.current_editor()
@@ -1782,8 +2126,9 @@ class MyNotepad(QMainWindow):
         
         if errors:
             QMessageBox.warning(
-                self, "File could not be opened",
-                "The following files could not be opened:\n\n" + "\n".join(errors)
+                self, "Cannot Open Files",
+                "coding-pudding is a text editor and can only open text files (UTF-8).\n\n"
+                "The following files are not supported:\n\n" + "\n".join(errors)
             )
 
 
