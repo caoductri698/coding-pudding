@@ -195,17 +195,6 @@ If you find a bug, please create an [Issue](../../issues) with:
 
 ---
 
-## Stats
-
-![GitHub release](https://img.shields.io/github/v/release/caoductri698/coding-pudding)
-![GitHub downloads](https://img.shields.io/github/downloads/caoductri698/coding-pudding/total)
-![GitHub stars](https://img.shields.io/github/stars/caoductri698/coding-pudding)
-![GitHub forks](https://img.shields.io/github/forks/caoductri698/coding-pudding)
-![GitHub issues](https://img.shields.io/github/issues/caoductri698/coding-pudding)
-![License](https://img.shields.io/github/license/caoductri698/coding-pudding)
-
----
-
 ## License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for more details.
@@ -217,3 +206,14 @@ You are free to:
 - Use privately
 
 Just include the original copyright notice and license text.
+
+---
+
+## Stats
+
+![GitHub release](https://img.shields.io/github/v/release/caoductri698/coding-pudding)
+![GitHub downloads](https://img.shields.io/github/downloads/caoductri698/coding-pudding/total)
+![GitHub stars](https://img.shields.io/github/stars/caoductri698/coding-pudding)
+![GitHub forks](https://img.shields.io/github/forks/caoductri698/coding-pudding)
+![GitHub issues](https://img.shields.io/github/issues/caoductri698/coding-pudding)
+![License](https://img.shields.io/github/license/caoductri698/coding-pudding)
