@@ -28,11 +28,11 @@
 
 - **Tabs** — Open multiple files in one window.
 - **Dark mode** — Protect your eyes during long coding sessions.
-- **Automatical indentation** — Automatically indent after `:` (no more typing 4 spaces manually).
+- **Automatic indentation** — Automatically indent after `:` (no more typing 4 spaces manually).
 - **Bracket matching** — Automatically close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
 - **Smart bracket deletion** — Delete matching bracket pairs intelligently.
 - **Tear-off tabs** — Drag a tab out to create a new window with that file.
-- **Automatically scrolling** — Middle-click to create an anchor and scroll automatically.
+- **Auto-scroll** — Middle-click to create an anchor and scroll automatically.
 - **Toggle comment** — `Ctrl + /` to comment/uncomment selected lines.
 - **Line numbers** — Easily locate your code by line number.
 - **Find/Replace/Go To** — Full search, replace, and navigation support.
@@ -40,6 +40,7 @@
 - **"Open with coding-pudding"** — Right-click any file to open it directly.
 - **Word counting** - Press `Ctrl + Shift + W` at the same time to open `Word Count` dialog.
 - **Horizontal scrolling** - Press `Shift + Scroll` to do horizontal scroll.
+- **Settings dialog** - Press `Ctrl + ,` to configure font, font size, theme, and editor behavior.
 
 ---
 
@@ -86,7 +87,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 
 - **Operating System**: Windows 7/8/10/11
 - **RAM**: at least 2GB (for best performance)
-- **Python version** (if running from source code): 3.8+
+- **Python version** (if running from source code): 3.8+ (tested on 3.14)
 
 ---
 
@@ -206,14 +207,3 @@ You are free to:
 - Use privately
 
 Just include the original copyright notice and license text.
-
----
-
-## Stats
-
-![GitHub release](https://img.shields.io/github/v/release/caoductri698/coding-pudding)
-![GitHub downloads](https://img.shields.io/github/downloads/caoductri698/coding-pudding/total)
-![GitHub stars](https://img.shields.io/github/stars/caoductri698/coding-pudding)
-![GitHub forks](https://img.shields.io/github/forks/caoductri698/coding-pudding)
-![GitHub issues](https://img.shields.io/github/issues/caoductri698/coding-pudding)
-![License](https://img.shields.io/github/license/caoductri698/coding-pudding)
