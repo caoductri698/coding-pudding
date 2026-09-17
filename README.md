@@ -19,6 +19,7 @@
 
 <p align="center">
   <img src="screenshots/tabs.PNG" width="45%" />
+  <img src="screenshots/settings.PNG" width="45%" />
 </p>
 
 ---
@@ -113,6 +114,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Shift + Tab` | Unindent |
 | `Ctrl + Shift + W` | Word count |
 | `Shift + Scroll` | Horizontal scrolling |
+| `Ctrl + ,` | Settings |
 
 ---
 
