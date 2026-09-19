@@ -2055,7 +2055,7 @@ class MyNotepad(QMainWindow):
                 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
                 QRadioButton { color: #d4d4d4; }
                 QTabWidget::pane { border: none; background-color: #1e1e1e; }
-                QTabBar::tab { background-color: #2d2d2d; color: #d4d4d4; padding: 6px 12px; border: 1px solid #3d3d3d; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
+                QTabBar::tab { background-color: #2d2d2d; color: #d4d4d4; padding: 8px 20px; border: 1px solid #3d3d3d; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 3px; }
                 QTabBar::tab:selected { background-color: #1e1e1e; color: white; }
                 QTabBar::tab:hover { background-color: #3d3d3d; }
                 QComboBox { background-color: #3d3d3d; color: #d4d4d4; border: 1px solid #4d4d4d; padding: 3px; }
@@ -2080,7 +2080,7 @@ class MyNotepad(QMainWindow):
                 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
                 QRadioButton { color: black; }
                 QTabWidget::pane { border: none; background-color: white; }
-                QTabBar::tab { background-color: #e0e0e0; color: black; padding: 6px 12px; border: 1px solid #ccc; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
+                QTabBar::tab { background-color: #e0e0e0; color: black; padding: 6px 12px; border: 1px solid #ccc; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 3px; }
                 QTabBar::tab:selected { background-color: white; color: black; }
                 QTabBar::tab:hover { background-color: #f0f0f0; }
                 QComboBox { background-color: white; color: black; border: 1px solid #ccc; padding: 3px; }
