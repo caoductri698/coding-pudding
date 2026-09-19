@@ -60,7 +60,7 @@ git clone https://github.com/caoductri698/coding-pudding.git
 cd coding-pudding
 
 # Install dependencies
-py -m pip install PyQt5
+py -m pip install PyQt6
 
 # Run app
 py coding-pudding.py
@@ -116,6 +116,8 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Ctrl + Shift + W` | Word count |
 | `Shift + Scroll` | Horizontal scrolling |
 | `Ctrl + ,` | Settings dialog |
+| `Ctrl + Alt + W` | Close all tabs |
+| `Ctrl + Scroll` | Zoom in out out |
 
 ---
 
@@ -138,7 +140,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 - Middle-click anywhere in the editor --> An anchor appears
 - Move mouse up/down --> The page scrolls automatically
 - The further from the anchor, the faster it scrolls
-- Middle-click again to disable
+- Middle-click again to disable the anchor
 
 ### Register context menu
 
@@ -151,7 +153,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 ## Built with
 
 - **Python 3.14** — Programming language
-- **PyQt5** — GUI framework
+- **PyQt6** — GUI framework
 - **PyInstaller** — Packaging tool
 - **winreg** — Windows Registry integration
 
@@ -185,7 +187,7 @@ If you find a bug, please create an [Issue](../../issues) with:
 - **Gmail**: caoductri698@gmail.com
 - **TikTok**: [tdwc208](https://tiktok.com/@tdwc208)
 - **Instagram**: [tdwc208](https://instagram.com/tdwc208)
-- **Hotline**: 0342513045
+- **Hotline**: +84342513045
 - **Facebook**: [tri6462 (Trii Dwck)](https://facebook.com/tri6462)
 
 ---
@@ -198,7 +200,7 @@ If you find a bug, please create an [Issue](../../issues) with:
 
 ## License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for more details.
+This project is licensed under the **GPL v3.0 License**
 
 You are free to:
 - Use commercially
@@ -206,4 +208,10 @@ You are free to:
 - Distribute
 - Use privately
 
-Just include the original copyright notice and license text.
+Under the following conditions:
+
+- **Source code MUST be provided** with any distribution
+- **Derivatives must also be licensed under GPL v3.0**
+- **Original copyright notice must be preserved**
+
+For more details, see the [LICENSE](LICENSE) file or visit [gnu.org/licenses/gpl-3.0](https://www.gnu.org/licenses/gpl-3.0.html).
