@@ -1,6 +1,6 @@
 # coding-pudding.exe
 
-> A lightweight Python IDE for low-configuration laptops/PCs.
+> An optimized Python editor for low-configuration laptops/PCs.
 
 <p align="center">
   <img src="screenshots/light.PNG" width="45%" />
@@ -41,6 +41,10 @@
 - **Word counting** - Press `Ctrl + Shift + W` at the same time to open `Word Count` dialog.
 - **Horizontal scrolling** - Press `Shift + Scroll` to do horizontal scroll.
 - **Settings dialog** - Press `Ctrl + ,` to configure font, font size, theme, and editor behavior.
+- **Remember opened tabs** - The editor remembers tabs that belong to the last coding session.
+- **Tab context manager** - Right-click on tabs card now can open a menu.
+- **Close all tabs** - Press `Ctrl + Alt + W` to close all tabs (if there are unsaved files, it will show a `Warning dialog`).
+- **Indentation size setting** - Change many sizes of indentation inside `Settings` dialog.
 
 ---
 
