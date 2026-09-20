@@ -1,19 +1,24 @@
 import sys
 import os
 import re
+import hashlib
 from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QPlainTextEdit,
                              QMenuBar, QMenu, QFileDialog, QMessageBox,
                              QStatusBar, QLabel, QFontDialog, QColorDialog,
-                             QDialog, QVBoxLayout, QLineEdit, QPushButton,
-                             QCheckBox, QGroupBox, QHBoxLayout, QRadioButton,
-                             QButtonGroup, QWidget, QListWidget,
+                             QDialog, QVBoxLayout, QHBoxLayout, QLineEdit,
+                             QPushButton, QCheckBox, QGroupBox,
+                             QRadioButton, QButtonGroup, QWidget, QListWidget,
                              QListWidgetItem, QAbstractItemView, QTabWidget,
-                             QSpinBox, QComboBox, QInputDialog)
+                             QSpinBox, QComboBox, QInputDialog, QTableWidget,
+                             QTableWidgetItem, QHeaderView, QDialogButtonBox,
+                             QListWidget, QTableWidget, QTableWidgetItem,
+                             QHeaderView)
 from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QSettings
 from PyQt6.QtGui import (QFont, QColor, QTextCursor, QKeySequence, QIcon,
                          QTextDocument, QPainter, QTextFormat, QCursor,
-                         QTextCharFormat, QFontDatabase, QAction)
+                         QTextCharFormat, QFontDatabase, QAction, QPen,
+                         QBrush)
 
 
 def resource_path(relative_path):
@@ -23,6 +28,13 @@ def resource_path(relative_path):
     except AttributeError:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
+
+
+def path_hash(file_path):
+    """Create a hash from file path for QSettings key"""
+    if not file_path:
+        return None
+    return hashlib.md5(file_path.encode('utf-8')).hexdigest()
 
 
 try:
@@ -183,7 +195,7 @@ class AutoScrollAnchor(QWidget):
 # ============================================================
 
 class CodeEditor(QPlainTextEdit):
-    def __init__(self, parent=None, dark_mode=False, indent_size=4):
+    def __init__(self, parent=None, dark_mode=False, indent_size=4, file_path=None):
         super().__init__(parent)
         self.line_number_area = LineNumberArea(self)
 
@@ -192,6 +204,10 @@ class CodeEditor(QPlainTextEdit):
 
         # v5.0 settings
         self.indent_size = indent_size
+
+        # v6.0: bookmarks
+        self.bookmarks = set()  # set of 1-based line numbers
+        self.file_path = file_path
 
         font = QFont(self.font_family, self.font_size)
         self.setFont(font)
@@ -202,7 +218,6 @@ class CodeEditor(QPlainTextEdit):
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-        # Prevent Tab from changing focus - we handle it manually
         self.setTabChangesFocus(False)
 
         self.auto_scroll_active = False
@@ -237,7 +252,6 @@ class CodeEditor(QPlainTextEdit):
         self.line_number_area.setFixedWidth(width)
 
     def update_line_number_area_request(self, rect, dy):
-        """Called when the viewport needs to be updated"""
         if dy:
             self.line_number_area.scroll(0, dy)
         else:
@@ -257,6 +271,98 @@ class CodeEditor(QPlainTextEdit):
         if self.indent_size == 0:
             return 4
         return self.indent_size
+
+    # ============ BOOKMARKS (v6.0) ============
+    def toggle_bookmark(self):
+        """Toggle bookmark at current line"""
+        cursor = self.textCursor()
+        line_num = cursor.blockNumber() + 1
+
+        if line_num in self.bookmarks:
+            self.bookmarks.discard(line_num)
+        else:
+            self.bookmarks.add(line_num)
+
+        self.line_number_area.update()
+
+    def next_bookmark(self):
+        """Jump to next bookmark (wrap around)"""
+        if not self.bookmarks:
+            return False
+
+        cursor = self.textCursor()
+        current_line = cursor.blockNumber() + 1
+
+        sorted_bm = sorted(self.bookmarks)
+
+        # Find first bookmark > current line
+        next_bm = None
+        for bm in sorted_bm:
+            if bm > current_line:
+                next_bm = bm
+                break
+
+        # Wrap around
+        if next_bm is None:
+            next_bm = sorted_bm[0]
+
+        self._goto_line(next_bm)
+        return True
+
+    def prev_bookmark(self):
+        """Jump to previous bookmark (wrap around)"""
+        if not self.bookmarks:
+            return False
+
+        cursor = self.textCursor()
+        current_line = cursor.blockNumber() + 1
+
+        sorted_bm = sorted(self.bookmarks, reverse=True)
+
+        # Find first bookmark < current line
+        prev_bm = None
+        for bm in sorted_bm:
+            if bm < current_line:
+                prev_bm = bm
+                break
+
+        # Wrap around
+        if prev_bm is None:
+            prev_bm = sorted(self.bookmarks)[-1]
+
+        self._goto_line(prev_bm)
+        return True
+
+    def clear_all_bookmarks(self):
+        """Clear all bookmarks in current file"""
+        if not self.bookmarks:
+            return
+        self.bookmarks.clear()
+        self.line_number_area.update()
+
+    def _goto_line(self, line_num):
+        """Move cursor to specified line (1-based)"""
+        block = self.document().findBlockByLineNumber(line_num - 1)
+        if block.isValid():
+            cursor = QTextCursor(block)
+            self.setTextCursor(cursor)
+            self.centerCursor()
+
+    def load_bookmarks(self, bookmarks_list):
+        """Load bookmarks from a list of line numbers"""
+        self.bookmarks = set()
+        max_lines = self.blockCount()
+        for line_num in bookmarks_list:
+            try:
+                n = int(line_num)
+                if 1 <= n <= max_lines:
+                    self.bookmarks.add(n)
+            except (ValueError, TypeError):
+                continue
+        self.line_number_area.update()
+
+    def get_bookmark_count(self):
+        return len(self.bookmarks)
 
     # ============ DRAG & DROP ============
     def dragEnterEvent(self, event):
@@ -281,12 +387,10 @@ class CodeEditor(QPlainTextEdit):
             super().dropEvent(event)
 
     def apply_font(self):
-        """Apply font to all text (including existing)"""
         font = QFont(self.font_family, self.font_size)
         self.setFont(font)
         self.document().setDefaultFont(font)
 
-        # Apply font to all existing text
         self.blockSignals(True)
 
         cursor = self.textCursor()
@@ -302,7 +406,6 @@ class CodeEditor(QPlainTextEdit):
         char_format.setFontPointSize(self.font_size)
         select_all.mergeCharFormat(char_format)
 
-        # Restore cursor
         new_cursor = self.textCursor()
         if had_selection:
             new_cursor.setPosition(sel_start)
@@ -330,11 +433,13 @@ class CodeEditor(QPlainTextEdit):
             self.bg_color = QColor(30, 30, 30)
             self.line_number_bg = QColor(40, 40, 40)
             self.line_number_fg = QColor(100, 100, 100)
+            self.bookmark_color = QColor(255, 255, 255)  # white
         else:
             self.text_color = QColor(0, 0, 0)
             self.bg_color = QColor(255, 255, 255)
             self.line_number_bg = QColor(240, 240, 240)
             self.line_number_fg = QColor(128, 128, 128)
+            self.bookmark_color = QColor(0, 0, 0)  # black
 
         palette = self.palette()
         palette.setColor(palette.ColorRole.Base, self.bg_color)
@@ -527,7 +632,7 @@ class CodeEditor(QPlainTextEdit):
         if self.auto_scroll_active:
             self.stop_auto_scroll()
 
-        # Handle Tab manually (QPlainTextEdit would use it to change focus by default)
+        # Handle Tab manually
         if event.key() == Qt.Key.Key_Tab and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
             cursor = self.textCursor()
             if cursor.hasSelection():
@@ -548,8 +653,6 @@ class CodeEditor(QPlainTextEdit):
                     else:
                         break
 
-                # Only indent whole line if it has content AND cursor is in leading whitespace
-                # Otherwise insert indent string at cursor position
                 has_content = bool(line_text.strip())
 
                 if has_content and pos_in_line <= leading_spaces:
@@ -897,8 +1000,27 @@ class CodeEditor(QPlainTextEdit):
 
         self.setTextCursor(cursor)
 
+    # ============ BOOKMARK ICON + LINE NUMBER PAINT ============
+    def _draw_bookmark_icon(self, painter, x, y):
+        """Draw a solid bookmark ribbon at (x, y)"""
+        h = self.fontMetrics().height() - 2
+        w = max(int(h * 0.7), 6)
+        notch = max(int(h * 0.35), 3)
+
+        points = [
+            QPoint(x, y),
+            QPoint(x + w, y),
+            QPoint(x + w, y + h),
+            QPoint(x + w // 2, y + h - notch),
+            QPoint(x, y + h),
+        ]
+
+        painter.setBrush(self.bookmark_color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawPolygon(*points)
+
     def line_number_area_paint(self, event):
-        """Optimized line number painting using QPlainTextEdit API"""
+        """Paint line numbers + bookmark icons"""
         painter = QPainter(self.line_number_area)
         painter.fillRect(event.rect(), self.line_number_bg)
 
@@ -908,13 +1030,23 @@ class CodeEditor(QPlainTextEdit):
         bottom = top + self.blockBoundingRect(block).height()
 
         font_metrics = painter.fontMetrics()
-        painter.setPen(self.line_number_fg)
+        line_height = self.blockBoundingRect(block).height()
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
-                number = str(block_number + 1)
-                text_y = int(top + (self.fontMetrics().height() - font_metrics.height()) / 2 + font_metrics.ascent())
-                painter.drawText(5, text_y, number)
+                line_num = block_number + 1
+                has_bookmark = line_num in self.bookmarks
+
+                if has_bookmark:
+                    # Draw bookmark icon instead of line number
+                    icon_y = int(top + (line_height - (self.fontMetrics().height() - 2)) / 2)
+                    self._draw_bookmark_icon(painter, 5, icon_y)
+                else:
+                    # Draw line number
+                    number = str(line_num)
+                    text_y = int(top + (self.fontMetrics().height() - font_metrics.height()) / 2 + font_metrics.ascent())
+                    painter.setPen(self.line_number_fg)
+                    painter.drawText(5, text_y, number)
 
             block = block.next()
             top = bottom
@@ -988,6 +1120,179 @@ class CustomTabWidget(QTabWidget):
 
 
 # ============================================================
+# BOOKMARK LIST DIALOG (v6.0)
+# ============================================================
+
+class BookmarkListDialog(QDialog):
+    def __init__(self, parent, editor, file_path, dark_mode):
+        super().__init__(parent)
+        self.editor = editor
+        self.file_path = file_path
+        self.dark_mode = dark_mode
+
+        display_name = os.path.basename(file_path) if file_path else "Untitled"
+        self.setWindowTitle(f'Bookmarks in "{display_name}"')
+        self.setFixedSize(700, 500)
+        self.setModal(True)
+
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+
+        # Summary
+        count = len(editor.bookmarks)
+        if count == 0:
+            summary_text = "No bookmarks in this file"
+        elif count == 1:
+            summary_text = "Total: 1 bookmark"
+        else:
+            summary_text = f"Total: {count} bookmarks"
+
+        self.summary_label = QLabel(summary_text)
+        self.summary_label.setStyleSheet("font-size: 11pt; font-weight: bold;")
+        layout.addWidget(self.summary_label)
+
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["#", "Line", "Content"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.doubleClicked.connect(self._on_double_click)
+
+        # Column widths
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(0, 50)
+        self.table.setColumnWidth(1, 70)
+
+        layout.addWidget(self.table)
+
+        # Buttons
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+
+        self.go_to_btn = QPushButton("Go To")
+        self.go_to_btn.clicked.connect(self._go_to_selected)
+        self.go_to_btn.setEnabled(count > 0)
+        button_row.addWidget(self.go_to_btn)
+
+        self.remove_btn = QPushButton("Remove")
+        self.remove_btn.clicked.connect(self._remove_selected)
+        self.remove_btn.setEnabled(count > 0)
+        button_row.addWidget(self.remove_btn)
+
+        self.clear_btn = QPushButton("Clear All")
+        self.clear_btn.clicked.connect(self._clear_all)
+        self.clear_btn.setEnabled(count > 0)
+        button_row.addWidget(self.clear_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        button_row.addWidget(close_btn)
+
+        layout.addLayout(button_row)
+
+        self.setLayout(layout)
+
+        # Populate table
+        self._refresh_table()
+
+    def _refresh_table(self):
+        """Rebuild the table from editor.bookmarks"""
+        sorted_bookmarks = sorted(self.editor.bookmarks)
+
+        self.table.setRowCount(len(sorted_bookmarks))
+
+        doc = self.editor.document()
+
+        for row, line_num in enumerate(sorted_bookmarks):
+            # Column 0: Order number
+            item_num = QTableWidgetItem(str(row + 1))
+            item_num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 0, item_num)
+
+            # Column 1: Line number
+            item_line = QTableWidgetItem(str(line_num))
+            item_line.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 1, item_line)
+
+            # Column 2: Content preview
+            block = doc.findBlockByLineNumber(line_num - 1)
+            content = block.text() if block.isValid() else ""
+            if len(content) > 80:
+                content = content[:77] + "..."
+            item_content = QTableWidgetItem(content)
+            self.table.setItem(row, 2, item_content)
+
+        # Update summary
+        count = len(sorted_bookmarks)
+        if count == 0:
+            summary_text = "No bookmarks in this file"
+        elif count == 1:
+            summary_text = "Total: 1 bookmark"
+        else:
+            summary_text = f"Total: {count} bookmarks"
+        self.summary_label.setText(summary_text)
+
+        # Update button states
+        self.go_to_btn.setEnabled(count > 0)
+        self.remove_btn.setEnabled(count > 0)
+        self.clear_btn.setEnabled(count > 0)
+
+    def _get_selected_line(self):
+        """Return the line number of the selected row, or None"""
+        row = self.table.currentRow()
+        if row < 0:
+            return None
+        item = self.table.item(row, 1)
+        if not item:
+            return None
+        try:
+            return int(item.text())
+        except ValueError:
+            return None
+
+    def _on_double_click(self, index):
+        """Handle double-click on row"""
+        self._go_to_selected()
+
+    def _go_to_selected(self):
+        line_num = self._get_selected_line()
+        if line_num is None:
+            return
+        self.editor._goto_line(line_num)
+        self.close()
+
+    def _remove_selected(self):
+        line_num = self._get_selected_line()
+        if line_num is None:
+            return
+        self.editor.bookmarks.discard(line_num)
+        self.editor.line_number_area.update()
+        self._refresh_table()
+
+    def _clear_all(self):
+        if not self.editor.bookmarks:
+            return
+        reply = QMessageBox.question(
+            self, "Clear All Bookmarks",
+            "Remove all bookmarks in this file?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.editor.bookmarks.clear()
+        self.editor.line_number_area.update()
+        self._refresh_table()
+
+
+# ============================================================
 # SETTINGS DIALOG
 # ============================================================
 
@@ -1006,7 +1311,6 @@ class SettingsDialog(QDialog):
         editor_group = QGroupBox("Editor")
         editor_layout = QVBoxLayout()
 
-        # Font family
         font_row = QHBoxLayout()
         font_row.addWidget(QLabel("Font:"))
         self.font_combo = QComboBox()
@@ -1043,7 +1347,6 @@ class SettingsDialog(QDialog):
         hint_label.setStyleSheet("color: gray; font-size: 9pt; font-style: italic;")
         editor_layout.addWidget(hint_label)
 
-        # Font size
         size_row = QHBoxLayout()
         size_row.addWidget(QLabel("Font size:"))
         self.size_spin = QSpinBox()
@@ -1055,7 +1358,6 @@ class SettingsDialog(QDialog):
         size_row.addStretch()
         editor_layout.addLayout(size_row)
 
-        # Tab size (Indentation size)
         tab_row = QHBoxLayout()
         tab_row.addWidget(QLabel("Indentation size:"))
         self.tab_size_combo = QComboBox()
@@ -1073,7 +1375,6 @@ class SettingsDialog(QDialog):
         tab_row.addStretch()
         editor_layout.addLayout(tab_row)
 
-        # Preview
         editor_layout.addWidget(QLabel("Preview:"))
         self.preview = QLabel("def hello():\n    print(\"Hello, world!\")")
         self.preview.setMinimumHeight(60)
@@ -1298,6 +1599,9 @@ class MyNotepad(QMainWindow):
         self.indent_size = 4
         self.restore_tabs = True
 
+        # v6.0
+        self.recent_files = []  # list of file paths, max 10
+
         self.tabs = []
 
         self.dragging_tab = False
@@ -1470,6 +1774,137 @@ class MyNotepad(QMainWindow):
         settings.setValue("session_positions", positions)
         settings.setValue("session_active", self.tab_widget.currentIndex())
 
+    # ============ BOOKMARKS PERSISTENCE (v6.0) ============
+    def load_bookmarks_for(self, file_path):
+        """Load bookmarks for a file"""
+        if not file_path:
+            return []
+        key = f"bookmarks/{path_hash(file_path)}"
+        settings = QSettings("coding-pudding", "coding-pudding")
+        value = settings.value(key, [])
+        if isinstance(value, str):
+            value = [value]
+        return value if isinstance(value, list) else []
+
+    def save_bookmarks_for(self, file_path, bookmarks):
+        """Save bookmarks for a file"""
+        if not file_path:
+            return
+        key = f"bookmarks/{path_hash(file_path)}"
+        settings = QSettings("coding-pudding", "coding-pudding")
+        if bookmarks:
+            settings.setValue(key, sorted(bookmarks))
+        else:
+            settings.remove(key)
+
+    def save_all_bookmarks(self):
+        """Save bookmarks for all tabs"""
+        for tab in self.tabs:
+            if tab.file_path:
+                self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
+
+    # ============ RECENT FILES (v6.0) ============
+    def add_recent_file(self, file_path):
+        """Add file to recent files list"""
+        if not file_path:
+            return
+
+        # Remove if already exists
+        if file_path in self.recent_files:
+            self.recent_files.remove(file_path)
+
+        # Insert at beginning
+        self.recent_files.insert(0, file_path)
+
+        # Limit to 10
+        self.recent_files = self.recent_files[:10]
+
+        # Save
+        settings = QSettings("coding-pudding", "coding-pudding")
+        settings.setValue("recent_files", self.recent_files)
+
+        # Rebuild menu
+        self.rebuild_recent_menu()
+
+    def clear_recent_files(self):
+        """Clear all recent files"""
+        self.recent_files = []
+        settings = QSettings("coding-pudding", "coding-pudding")
+        settings.remove("recent_files")
+        self.rebuild_recent_menu()
+
+    def rebuild_recent_menu(self):
+        """Rebuild the 'Open Recent' submenu"""
+        if not hasattr(self, 'recent_menu'):
+            return
+
+        self.recent_menu.clear()
+
+        # Filter out non-existent files
+        existing = []
+        for path in self.recent_files:
+            if os.path.isfile(path):
+                existing.append(path)
+
+        # Update self.recent_files if we removed some
+        if len(existing) != len(self.recent_files):
+            self.recent_files = existing
+            settings = QSettings("coding-pudding", "coding-pudding")
+            settings.setValue("recent_files", self.recent_files)
+
+        if not existing:
+            # Disable menu
+            no_recent = QAction("(No recent files)", self)
+            no_recent.setEnabled(False)
+            self.recent_menu.addAction(no_recent)
+            self.recent_menu.setEnabled(False)
+            return
+
+        self.recent_menu.setEnabled(True)
+
+        for i, path in enumerate(existing, 1):
+            basename = os.path.basename(path)
+            action = QAction(f"{i}. {basename}", self)
+            action.setToolTip(path)
+            action.setStatusTip(path)
+            action.triggered.connect(lambda checked=False, p=path: self.open_recent_file(p))
+            self.recent_menu.addAction(action)
+
+        self.recent_menu.addSeparator()
+
+        clear_action = QAction("Clear Recent Files", self)
+        clear_action.triggered.connect(self.clear_recent_files)
+        self.recent_menu.addAction(clear_action)
+
+    def open_recent_file(self, file_path):
+        """Open a file from recent files list (always creates new tab)"""
+        if not os.path.isfile(file_path):
+            QMessageBox.warning(
+                self, "File Not Found",
+                f"The file no longer exists:\n{file_path}"
+            )
+            # Remove from list
+            if file_path in self.recent_files:
+                self.recent_files.remove(file_path)
+                settings = QSettings("coding-pudding", "coding-pudding")
+                settings.setValue("recent_files", self.recent_files)
+                self.rebuild_recent_menu()
+            return
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.add_new_tab(file_path, content)
+            self.apply_font()
+            # Move to top of recent list
+            self.add_recent_file(file_path)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Error",
+                f"Could not open file:\n{file_path}\n\n{str(e)}"
+            )
+
+    # ============ SETTINGS LOAD/SAVE ============
     def load_settings(self):
         settings = QSettings("coding-pudding", "coding-pudding")
         geometry = settings.value("geometry")
@@ -1499,6 +1934,12 @@ class MyNotepad(QMainWindow):
         self.indent_size = settings.value("indent_size", 4, type=int)
         self.restore_tabs = settings.value("restore_tabs", True, type=bool)
 
+        # v6.0 - recent files
+        recent = settings.value("recent_files", [])
+        if isinstance(recent, str):
+            recent = [recent]
+        self.recent_files = recent if isinstance(recent, list) else []
+
     def save_settings(self):
         settings = QSettings("coding-pudding", "coding-pudding")
         settings.setValue("geometry", self.saveGeometry())
@@ -1511,6 +1952,7 @@ class MyNotepad(QMainWindow):
         settings.setValue("trim_on_save", self.trim_on_save)
         settings.setValue("indent_size", self.indent_size)
         settings.setValue("restore_tabs", self.restore_tabs)
+        settings.setValue("recent_files", self.recent_files)
 
     def current_editor(self):
         return self.tab_widget.currentWidget()
@@ -1525,7 +1967,8 @@ class MyNotepad(QMainWindow):
         editor = CodeEditor(
             self,
             self.dark_mode,
-            indent_size=self.indent_size
+            indent_size=self.indent_size,
+            file_path=file_path
         )
         editor.font_family = self.font_family
         editor.font_size = self.font_size
@@ -1558,10 +2001,19 @@ class MyNotepad(QMainWindow):
         else:
             tab.original_content = ""
 
+        # v6.0: load bookmarks for this file
+        if file_path:
+            bm_list = self.load_bookmarks_for(file_path)
+            editor.load_bookmarks(bm_list)
+
         self.tabs.append(tab)
         index = self.tab_widget.addTab(editor, tab.get_display_name())
         self.tab_widget.setTabToolTip(index, tab.get_tooltip())
         self.tab_widget.setCurrentIndex(index)
+
+        # v6.0: add to recent files
+        if file_path:
+            self.add_recent_file(file_path)
 
         return tab
 
@@ -1594,6 +2046,11 @@ class MyNotepad(QMainWindow):
                     return
             elif reply == QMessageBox.StandardButton.Cancel:
                 return
+
+        # v6.0: save bookmarks before closing
+        if tab.file_path:
+            self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
+
         self.tab_widget.removeTab(index)
         self.tabs.pop(index)
         if len(self.tabs) == 0:
@@ -1637,6 +2094,9 @@ class MyNotepad(QMainWindow):
                 pass
             else:
                 return
+
+        # Save bookmarks for all tabs
+        self.save_all_bookmarks()
 
         self.tab_widget.blockSignals(True)
         while self.tab_widget.count() > 0:
@@ -1692,6 +2152,11 @@ class MyNotepad(QMainWindow):
                 pass
             else:
                 return
+
+        # Save bookmarks for closing tabs
+        for i, tab in enumerate(self.tabs):
+            if i != current_index and tab.file_path:
+                self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
 
         self.tab_widget.blockSignals(True)
         self.tab_widget.removeTab(current_index)
@@ -1776,6 +2241,11 @@ class MyNotepad(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
+        # Save bookmarks for closing tabs
+        for i in range(index + 1, len(self.tabs)):
+            if self.tabs[i].file_path:
+                self.save_bookmarks_for(self.tabs[i].file_path, self.tabs[i].editor.bookmarks)
+
         self.tab_widget.blockSignals(True)
         for i in range(len(self.tabs) - 1, index, -1):
             self.tab_widget.removeTab(i)
@@ -1798,6 +2268,11 @@ class MyNotepad(QMainWindow):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
+
+        # Save bookmarks for closing tabs
+        for i in range(0, index):
+            if self.tabs[i].file_path:
+                self.save_bookmarks_for(self.tabs[i].file_path, self.tabs[i].editor.bookmarks)
 
         current = self.tab_widget.currentIndex()
         self.tab_widget.blockSignals(True)
@@ -1859,7 +2334,16 @@ class MyNotepad(QMainWindow):
 
         try:
             os.rename(old_path, new_path)
+
+            # Migrate bookmarks
+            old_bookmarks = self.load_bookmarks_for(old_path)
+            if old_bookmarks:
+                self.save_bookmarks_for(new_path, old_bookmarks)
+                settings = QSettings("coding-pudding", "coding-pudding")
+                settings.remove(f"bookmarks/{path_hash(old_path)}")
+
             tab.file_path = new_path
+            tab.editor.file_path = new_path
             self.update_tab_title(index)
             self.update_title()
         except Exception as e:
@@ -1926,6 +2410,8 @@ class MyNotepad(QMainWindow):
                 tab.original_content = content
                 self.update_tab_title(index)
                 self.update_title()
+                # Save bookmarks after save
+                self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
                 return True
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not save file: {str(e)}")
@@ -1951,10 +2437,13 @@ class MyNotepad(QMainWindow):
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(content)
                 tab.file_path = file_path
+                tab.editor.file_path = file_path
                 tab.is_modified = False
                 tab.original_content = content
                 self.update_tab_title(index)
                 self.update_title()
+                # Add to recent files
+                self.add_recent_file(file_path)
                 return True
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not save file: {str(e)}")
@@ -1968,7 +2457,6 @@ class MyNotepad(QMainWindow):
 
         editor = tab.editor
 
-        # Fast check: compare length first
         current_len = editor.document().characterCount() - 1
         original_len = len(tab.original_content)
 
@@ -2002,7 +2490,6 @@ class MyNotepad(QMainWindow):
             self.setWindowTitle(base_title)
 
     def update_cursor_position(self):
-        """Optimized - uses block position instead of full text copy"""
         editor = self.current_editor()
         if not editor:
             return
@@ -2015,7 +2502,6 @@ class MyNotepad(QMainWindow):
 
         self.position_label.setText(f"Ln {line_number}, Col {column_number}")
 
-        # Cheap line ending detection - only checks last 2 chars
         doc = editor.document()
         if doc.characterCount() <= 1:
             self.line_ending_label.setText("None")
@@ -2050,17 +2536,22 @@ class MyNotepad(QMainWindow):
                 QLineEdit { background-color: #3d3d3d; color: #d4d4d4; border: 1px solid #4d4d4d; padding: 3px; }
                 QPushButton { background-color: #3d3d3d; color: #d4d4d4; border: 1px solid #4d4d4d; padding: 5px 10px; }
                 QPushButton:hover { background-color: #4d4d4d; }
+                QPushButton:disabled { background-color: #2a2a2a; color: #666666; }
                 QCheckBox { color: #d4d4d4; }
                 QGroupBox { color: #d4d4d4; border: 1px solid #4d4d4d; margin-top: 8px; }
                 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
                 QRadioButton { color: #d4d4d4; }
                 QTabWidget::pane { border: none; background-color: #1e1e1e; }
-                QTabBar::tab { background-color: #2d2d2d; color: #d4d4d4; padding: 8px 20px; border: 1px solid #3d3d3d; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 3px; }
+                QTabBar::tab { background-color: #2d2d2d; color: #d4d4d4; padding: 6px 12px; border: 1px solid #3d3d3d; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
                 QTabBar::tab:selected { background-color: #1e1e1e; color: white; }
                 QTabBar::tab:hover { background-color: #3d3d3d; }
                 QComboBox { background-color: #3d3d3d; color: #d4d4d4; border: 1px solid #4d4d4d; padding: 3px; }
                 QComboBox QAbstractItemView { background-color: #2d2d2d; color: #d4d4d4; selection-background-color: #3d3d3d; }
                 QSpinBox { background-color: #3d3d3d; color: #d4d4d4; border: 1px solid #4d4d4d; padding: 3px; }
+                QTableWidget { background-color: #2d2d2d; color: #d4d4d4; gridline-color: #3d3d3d; border: 1px solid #3d3d3d; alternate-background-color: #252525; }
+                QTableWidget::item { padding: 4px; }
+                QTableWidget::item:selected { background-color: #3d3d3d; color: white; }
+                QHeaderView::section { background-color: #3d3d3d; color: #d4d4d4; padding: 5px; border: 1px solid #4d4d4d; }
             """)
         else:
             self.setStyleSheet("""
@@ -2075,17 +2566,22 @@ class MyNotepad(QMainWindow):
                 QLineEdit { background-color: white; color: black; border: 1px solid #ccc; padding: 3px; }
                 QPushButton { background-color: #f0f0f0; color: black; border: 1px solid #ccc; padding: 5px 10px; }
                 QPushButton:hover { background-color: #e0e0e0; }
+                QPushButton:disabled { background-color: #e8e8e8; color: #999999; }
                 QCheckBox { color: black; }
                 QGroupBox { color: black; border: 1px solid #ccc; margin-top: 8px; }
                 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
                 QRadioButton { color: black; }
                 QTabWidget::pane { border: none; background-color: white; }
-                QTabBar::tab { background-color: #e0e0e0; color: black; padding: 6px 12px; border: 1px solid #ccc; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 3px; }
+                QTabBar::tab { background-color: #e0e0e0; color: black; padding: 6px 12px; border: 1px solid #ccc; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
                 QTabBar::tab:selected { background-color: white; color: black; }
                 QTabBar::tab:hover { background-color: #f0f0f0; }
                 QComboBox { background-color: white; color: black; border: 1px solid #ccc; padding: 3px; }
                 QComboBox QAbstractItemView { background-color: white; color: black; selection-background-color: #e0e0e0; }
                 QSpinBox { background-color: white; color: black; border: 1px solid #ccc; padding: 3px; }
+                QTableWidget { background-color: white; color: black; gridline-color: #e0e0e0; border: 1px solid #ccc; alternate-background-color: #f9f9f9; }
+                QTableWidget::item { padding: 4px; }
+                QTableWidget::item:selected { background-color: #0078d4; color: white; }
+                QHeaderView::section { background-color: #f0f0f0; color: black; padding: 5px; border: 1px solid #ccc; }
             """)
         self.update_status_bar_style()
 
@@ -2125,6 +2621,7 @@ class MyNotepad(QMainWindow):
 
         self.update_status_bar_style()
 
+    # ============ MENU BAR ============
     def create_menu_bar(self):
         menu_bar = self.menuBar()
 
@@ -2145,6 +2642,11 @@ class MyNotepad(QMainWindow):
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self.open_file)
         file_menu.addAction(open_action)
+
+        # v6.0: Recent Files submenu
+        self.recent_menu = file_menu.addMenu("Open Recent")
+        self.recent_menu.setEnabled(False)
+        self.rebuild_recent_menu()
 
         file_menu.addSeparator()
 
@@ -2290,6 +2792,39 @@ class MyNotepad(QMainWindow):
         word_count_action.triggered.connect(self.show_word_count)
         view_menu.addAction(word_count_action)
 
+        view_menu.addSeparator()
+
+        # v6.0: Bookmarks submenu
+        bookmarks_menu = view_menu.addMenu("Bookmarks")
+
+        toggle_bm_action = QAction("Toggle Bookmark", self)
+        toggle_bm_action.setShortcut("Ctrl+F2")
+        toggle_bm_action.triggered.connect(self.toggle_bookmark)
+        bookmarks_menu.addAction(toggle_bm_action)
+
+        next_bm_action = QAction("Next Bookmark", self)
+        next_bm_action.setShortcut("F2")
+        next_bm_action.triggered.connect(self.next_bookmark)
+        bookmarks_menu.addAction(next_bm_action)
+
+        prev_bm_action = QAction("Previous Bookmark", self)
+        prev_bm_action.setShortcut("Shift+F2")
+        prev_bm_action.triggered.connect(self.prev_bookmark)
+        bookmarks_menu.addAction(prev_bm_action)
+
+        bookmarks_menu.addSeparator()
+
+        show_all_bm_action = QAction("Show All Bookmarks", self)
+        show_all_bm_action.setShortcut("Ctrl+Shift+B")
+        show_all_bm_action.triggered.connect(self.show_bookmark_list)
+        bookmarks_menu.addAction(show_all_bm_action)
+
+        bookmarks_menu.addSeparator()
+
+        clear_bm_action = QAction("Clear All Bookmarks", self)
+        clear_bm_action.triggered.connect(self.clear_all_bookmarks)
+        bookmarks_menu.addAction(clear_bm_action)
+
         # SETTINGS
         settings_action = QAction("Settings", self)
         settings_action.setShortcut("Ctrl+,")
@@ -2312,6 +2847,51 @@ class MyNotepad(QMainWindow):
         about_action = QAction("About coding-pudding", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+    # ============ BOOKMARK ACTIONS (v6.0) ============
+    def toggle_bookmark(self):
+        editor = self.current_editor()
+        if editor:
+            editor.toggle_bookmark()
+
+    def next_bookmark(self):
+        editor = self.current_editor()
+        if editor:
+            if not editor.next_bookmark():
+                self.status_bar.showMessage("No bookmarks in this file", 2000)
+
+    def prev_bookmark(self):
+        editor = self.current_editor()
+        if editor:
+            if not editor.prev_bookmark():
+                self.status_bar.showMessage("No bookmarks in this file", 2000)
+
+    def clear_all_bookmarks(self):
+        editor = self.current_editor()
+        if editor:
+            if not editor.bookmarks:
+                self.status_bar.showMessage("No bookmarks to clear", 2000)
+                return
+            reply = QMessageBox.question(
+                self, "Clear All Bookmarks",
+                "Remove all bookmarks in this file?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                editor.clear_all_bookmarks()
+                tab = self.current_tab()
+                if tab and tab.file_path:
+                    self.save_bookmarks_for(tab.file_path, set())
+
+    def show_bookmark_list(self):
+        editor = self.current_editor()
+        if not editor:
+            return
+        tab = self.current_tab()
+        file_path = tab.file_path if tab else None
+        dialog = BookmarkListDialog(self, editor, file_path, self.dark_mode)
+        dialog.exec()
 
     def show_settings(self):
         dialog = SettingsDialog(self)
@@ -2340,8 +2920,7 @@ class MyNotepad(QMainWindow):
         QMessageBox.about(self, "About coding-pudding",
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
-            "<p><b>Version:</b> 5.0</p>"
-            "<p><b>RAM:</b> ~30MB</p>"
+            "<p><b>Version:</b> 6.0</p>"
             "<p><b>License:</b> GPL v3</p>")
 
     def toggle_dark_mode(self, checked):
@@ -2444,6 +3023,7 @@ class MyNotepad(QMainWindow):
     def closeEvent(self, event):
         self.save_settings()
         self.save_session()
+        self.save_all_bookmarks()
 
         for i in range(len(self.tabs) - 1, -1, -1):
             tab = self.tabs[i]
@@ -2800,13 +3380,7 @@ class GotoDialog(QDialog):
                 )
                 return
 
-            cursor = self.text_area.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-
-            for i in range(line_num - 1):
-                cursor.movePosition(QTextCursor.MoveOperation.Down)
-
-            self.text_area.setTextCursor(cursor)
+            self.text_area._goto_line(line_num)
             self.close()
         except ValueError:
             QMessageBox.warning(self, "Go To", "Please enter a valid number")
