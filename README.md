@@ -32,18 +32,18 @@
 
 ## Features
 
-- **Tabs** — Open multiple files in one window.
-- **Dark mode** — Protect your eyes during long coding sessions.
-- **Automatic indentation** — Automatically indent after `:` (no more typing 4 spaces manually).
-- **Bracket matching** — Automatically close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
-- **Smart bracket deletion** — Delete matching bracket pairs intelligently.
-- **Tear-off tabs** — Drag a tab out to create a new window with that file.
-- **Auto-scroll** — Middle-click to create an anchor and scroll automatically.
-- **Toggle comment** — `Ctrl + /` to comment/uncomment selected lines.
-- **Line numbers** — Easily locate your code by line number.
-- **Find/Replace/Go To** — Full search, replace, and navigation support.
-- **Automatically saving settings** — Remembers your theme (dark/light) and window size.
-- **"Open with coding-pudding"** — Right-click any file to open it directly.
+- **Tabs** - Open multiple files in one window.
+- **Dark mode** - Protect your eyes during long coding sessions.
+- **Automatic indentation** - Automatically indent after `:` (no more typing 4 spaces manually).
+- **Bracket matching** - Automatically close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
+- **Smart bracket deletion** - Delete matching bracket pairs intelligently.
+- **Tear-off tabs** - Drag a tab out to create a new window with that file.
+- **Auto-scroll** - Middle-click to create an anchor and scroll automatically.
+- **Toggle comment** - `Ctrl + /` to comment/uncomment selected lines.
+- **Line numbers** - Easily locate your code by line number.
+- **Find/Replace/Go To** - Full search, replace, and navigation support.
+- **Automatically saving settings** - Remembers your theme (dark/light) and window size.
+- **"Open with coding-pudding"** - Right-click any file to open it directly.
 - **Word counting** - Press `Ctrl + Shift + W` at the same time to open `Word Count` dialog.
 - **Horizontal scrolling** - Press `Shift + Scroll` to do horizontal scroll.
 - **Settings dialog** - Press `Ctrl + ,` to configure font, font size, theme, and editor behavior.
@@ -128,6 +128,10 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Ctrl + ,` | Settings dialog |
 | `Ctrl + Alt + W` | Close all tabs |
 | `Ctrl + Scroll` | Zoom in out out |
+| `Ctrl + F2` / `Ctrl + Fn + F2` | Toggle bookmark at current line |
+| `F2` / `Fn + F2` | Jump to the next bookmark |
+| `Shift + F2` / `Shift + Fn + F2` | Jump to the previous bookmark |
+| `Ctrl + Shift + B` | Open `Bookmarks` dialog |
 
 ---
 
@@ -162,10 +166,10 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 
 ## Built with
 
-- **Python 3.14** — Programming language
-- **PyQt6** — GUI framework
-- **PyInstaller** — Packaging tool
-- **winreg** — Windows Registry integration
+- **Python 3.14** - Programming language
+- **PyQt6** - GUI framework
+- **PyInstaller** - Packaging tool
+- **winreg** - Windows Registry integration
 
 ---
 
