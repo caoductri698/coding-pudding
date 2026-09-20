@@ -129,9 +129,9 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Ctrl + ,` | Settings dialog |
 | `Ctrl + Alt + W` | Close all tabs |
 | `Ctrl + Scroll` | Zoom in out out |
-| `Ctrl + F2` / `Ctrl + Fn + F2` | Toggle bookmark at current line |
-| `F2` / `Fn + F2` | Jump to the next bookmark |
-| `Shift + F2` / `Shift + Fn + F2` | Jump to the previous bookmark |
+| `Ctrl + F2` or `Ctrl + Fn + F2` | Toggle bookmark at current line |
+| `F2` or `Fn + F2` | Jump to the next bookmark |
+| `Shift + F2` or `Shift + Fn + F2` | Jump to the previous bookmark |
 | `Ctrl + Shift + B` | Open `Bookmarks` dialog |
 
 ---
