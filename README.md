@@ -51,6 +51,7 @@
 - **Tab context manager** - Right-click on tabs card now can open a menu.
 - **Close all tabs** - Press `Ctrl + Alt + W` to close all tabs (if there are unsaved files, it will show a `Warning` dialog).
 - **Indentation size setting** - Change many sizes of indentation inside `Settings` dialog.
+- **Bookmarks** - Note many important parts of your project.
 
 ---
 
