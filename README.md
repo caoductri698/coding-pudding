@@ -52,6 +52,7 @@
 - **Close all tabs** - Press `Ctrl + Alt + W` to close all tabs (if there are unsaved files, it will show a `Warning` dialog).
 - **Indentation size setting** - Change many sizes of indentation inside `Settings` dialog.
 - **Bookmarks** - Note many important parts of your project.
+- **Open Recent files** - `Files` --> `Open Recent` to show the TEN most recently opened files.
 
 ---
 
@@ -128,7 +129,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Shift + Scroll` | Horizontal scrolling |
 | `Ctrl + ,` | Settings dialog |
 | `Ctrl + Alt + W` | Close all tabs |
-| `Ctrl + Scroll` | Zoom in out out |
+| `Ctrl + Scroll` | Zoom in or out |
 | `Ctrl + F2` or `Ctrl + Fn + F2` | Toggle bookmark at current line |
 | `F2` or `Fn + F2` | Jump to the next bookmark |
 | `Shift + F2` or `Shift + Fn + F2` | Jump to the previous bookmark |
