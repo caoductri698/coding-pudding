@@ -32,27 +32,30 @@
 
 ## Features
 
-- **Tabs** - Open multiple files in one window.
-- **Dark mode** - Protect your eyes during long coding sessions.
-- **Automatic indentation** - Automatically indent after `:` (no more typing 4 spaces manually).
-- **Bracket matching** - Automatically close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
-- **Smart bracket deletion** - Delete matching bracket pairs intelligently.
-- **Tear-off tabs** - Drag a tab out to create a new window with that file.
-- **Auto-scroll** - Middle-click to create an anchor and scroll automatically.
-- **Toggle comment** - `Ctrl + /` to comment/uncomment selected lines.
-- **Line numbers** - Easily locate your code by line number.
-- **Find/Replace/Go To** - Full search, replace, and navigation support.
-- **Automatically saving settings** - Remembers your theme (dark/light) and window size.
-- **"Open with coding-pudding"** - Right-click any file to open it directly.
-- **Word counting** - Press `Ctrl + Shift + W` at the same time to open `Word Count` dialog.
-- **Horizontal scrolling** - Press `Shift + Scroll` to do horizontal scroll.
-- **Settings dialog** - Press `Ctrl + ,` to configure font, font size, theme, and editor behavior.
-- **Remember opened tabs** - The editor remembers tabs that belong to the last coding session.
-- **Tab context manager** - Right-click on tabs card now can open a menu.
-- **Close all tabs** - Press `Ctrl + Alt + W` to close all tabs (if there are unsaved files, it will show a `Warning` dialog).
-- **Indentation size setting** - Change many sizes of indentation inside `Settings` dialog.
-- **Bookmarks** - Note many important parts of your project.
-- **Open Recent files** - `Files` --> `Open Recent` to show the TEN most recently opened files.
+- **Tabs** — Open multiple files in one window.
+- **Dark mode** — Protect your eyes during long coding sessions.
+- **Automatic indentation** — Automatically indent after `:` (no more typing 4 spaces manually).
+- **Bracket matching** — Automatically close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
+- **Smart bracket deletion** — Delete matching bracket pairs intelligently.
+- **Tear-off tabs** — Drag a tab out to create a new window with that file.
+- **Auto-scroll** — Middle-click to create an anchor and scroll automatically.
+- **Toggle comment** — `Ctrl + /` to comment/uncomment selected lines.
+- **Line numbers** — Easily locate your code by line number.
+- **Find / Replace / Go To** — Full search, replace, and navigation support.
+- **Auto-saving settings** — Remembers your theme (dark/light) and window size.
+- **"Open with coding-pudding"** — Right-click any file to open it directly.
+- **Word counting** — Press `Ctrl + Shift + W` to open the `Word Count` dialog.
+- **Horizontal scrolling** — Press `Shift + Scroll` to do horizontal scroll.
+- **Settings dialog** — Press `Ctrl + ,` to configure font, font size, theme, and editor behavior.
+- **Remember opened tabs** — The editor remembers tabs from the last coding session.
+- **Tab context menu** — Right-click a tab to open a context menu.
+- **Close all tabs** — Press `Ctrl + Alt + W` to close all tabs (with unsaved-changes warning).
+- **Indentation size setting** — Change indentation size in the `Settings` dialog.
+- **Bookmarks** — Mark important parts of your project.
+- **Open Recent files** — `File` → `Open Recent` to show the `TEN` most recently opened files.
+- **Desktop notifications** — Toast notifications appear at the bottom-right of the screen with the app icon and name. Works on Windows 7/8/10/11. Falls back to `in-app toasts` on non-Windows systems.
+- **Tab elide** — Long file names are elided in the middle; tabs don't stretch to full width. Hover to see the full path.
+- **Convert indentation** — Convert leading whitespace between tabs and spaces with `Format` --> `Convert Indentation`. Useful for normalizing code style across files.
 
 ---
 
