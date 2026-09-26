@@ -2,6 +2,8 @@ import sys
 import os
 import re
 import hashlib
+import ctypes
+import ctypes.wintypes as wintypes
 from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QPlainTextEdit,
                              QMenuBar, QMenu, QFileDialog, QMessageBox,
@@ -11,10 +13,9 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QPlainTextEdit,
                              QRadioButton, QButtonGroup, QWidget, QListWidget,
                              QListWidgetItem, QAbstractItemView, QTabWidget,
                              QSpinBox, QComboBox, QInputDialog, QTableWidget,
-                             QTableWidgetItem, QHeaderView, QDialogButtonBox,
-                             QListWidget, QTableWidget, QTableWidgetItem,
-                             QHeaderView)
-from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QSettings
+                             QTableWidgetItem, QHeaderView, QTextEdit,
+                             QGraphicsOpacityEffect)
+from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QSettings, QPropertyAnimation
 from PyQt6.QtGui import (QFont, QColor, QTextCursor, QKeySequence, QIcon,
                          QTextDocument, QPainter, QTextFormat, QCursor,
                          QTextCharFormat, QFontDatabase, QAction, QPen,
@@ -42,6 +43,64 @@ try:
     HAS_WINREG = True
 except ImportError:
     HAS_WINREG = False
+
+
+# ============================================================
+# APP USER MODEL ID
+# ============================================================
+
+AUMID = "coding.pudding.app.1"
+APP_DISPLAY_NAME = "coding-pudding"
+
+
+def register_aumid(app_id=AUMID, display_name=APP_DISPLAY_NAME):
+    """Register AUMID into Registry for Windows to use DisplayName + IconUri"""
+    if not HAS_WINREG:
+        return False
+    try:
+        key_path = rf"Software\Classes\AppUserModelId\{app_id}"
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE
+        ) as key:
+            winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, display_name)
+            icon_path = resource_path("icon.ico")
+            if os.path.isfile(icon_path):
+                winreg.SetValueEx(
+                    key, "IconUri", 0, winreg.REG_SZ,
+                    os.path.abspath(icon_path)
+                )
+        return True
+    except Exception:
+        return False
+
+
+def unregister_aumid(app_id=AUMID):
+    """Remove AUMID from Registry"""
+    if not HAS_WINREG:
+        return False
+    try:
+        key_path = rf"Software\Classes\AppUserModelId\{app_id}"
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+        return True
+    except FileNotFoundError:
+        return True
+    except Exception:
+        return False
+
+
+def is_aumid_registered(app_id=AUMID):
+    """Check if AUMID is registered"""
+    if not HAS_WINREG:
+        return False
+    try:
+        key_path = rf"Software\Classes\AppUserModelId\{app_id}"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            winreg.QueryValueEx(key, "DisplayName")
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
 
 
 # ============================================================
@@ -112,8 +171,8 @@ def unregister_context_menu():
             winreg.DeleteKey(base_key, full_key_path)
         except FileNotFoundError:
             pass
-        except Exception as e:
-            print(f"Failed to unregister {key_path}: {e}")
+        except Exception:
+            pass
 
     return True
 
@@ -125,8 +184,317 @@ def auto_register_context_menu():
         return
     exe_path = sys.executable
     if not is_registered(exe_path):
-        print(f"Registering context menu for: {exe_path}")
         register_context_menu(exe_path)
+
+
+# ============================================================
+# WIN32 BALLOON TIP
+# ============================================================
+
+NIM_ADD        = 0x00000000
+NIM_MODIFY     = 0x00000001
+NIM_DELETE     = 0x00000002
+NIM_SETVERSION = 0x00000004
+
+NIF_ICON     = 0x00000002
+NIF_TIP      = 0x00000004
+NIF_INFO     = 0x00000010
+NIF_SHOWTIP  = 0x00000080
+
+NIIF_NONE    = 0x00000000
+NIIF_INFO    = 0x00000001
+NIIF_WARNING = 0x00000002
+NIIF_ERROR   = 0x00000003
+NIIF_NOSOUND = 0x00000010
+
+LR_LOADFROMFILE = 0x0010
+IMAGE_ICON      = 1
+
+IDI_APPLICATION = 32512
+IDI_INFORMATION = 32516
+IDI_WARNING     = 32515
+IDI_ERROR       = 32513
+
+
+class NOTIFYICONDATA(ctypes.Structure):
+    _fields_ = [
+        ("cbSize",           wintypes.DWORD),
+        ("hWnd",             wintypes.HWND),
+        ("uID",              wintypes.UINT),
+        ("uFlags",           wintypes.UINT),
+        ("uCallbackMessage", wintypes.UINT),
+        ("hIcon",            wintypes.HICON),
+        ("szTip",            wintypes.WCHAR * 128),
+        ("dwState",          wintypes.DWORD),
+        ("dwStateMask",      wintypes.DWORD),
+        ("szInfo",           wintypes.WCHAR * 256),
+        ("uVersion",         wintypes.UINT),
+        ("szInfoTitle",      wintypes.WCHAR * 64),
+        ("dwInfoFlags",      wintypes.DWORD),
+        ("guidItem",         ctypes.c_byte * 16),
+        ("hBalloonIcon",     wintypes.HICON),
+    ]
+
+
+_balloon_state = {
+    'hwnd': None,
+    'icon_added': False,
+    'hicon': None,
+    'nid': None,
+}
+
+
+def _init_balloon_system():
+    """Create once: use desktop window as parent for balloon tip"""
+    global _balloon_state
+
+    if _balloon_state['icon_added']:
+        return True
+
+    if sys.platform != 'win32':
+        return False
+
+    try:
+        user32 = ctypes.windll.user32
+        shell32 = ctypes.windll.shell32
+
+        user32.LoadIconW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        user32.LoadIconW.restype = ctypes.c_void_p
+
+        user32.LoadImageW.argtypes = [
+            ctypes.c_void_p, wintypes.LPCWSTR, ctypes.c_uint,
+            ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+        ]
+        user32.LoadImageW.restype = ctypes.c_void_p
+
+        user32.GetDesktopWindow.argtypes = []
+        user32.GetDesktopWindow.restype = ctypes.c_void_p
+
+        user32.DestroyIcon.argtypes = [ctypes.c_void_p]
+        user32.DestroyIcon.restype = ctypes.c_int
+
+        shell32.Shell_NotifyIconW.argtypes = [
+            ctypes.c_uint, ctypes.POINTER(NOTIFYICONDATA),
+        ]
+        shell32.Shell_NotifyIconW.restype = ctypes.c_int
+
+        # Use desktop window - creating a separated window is not required
+        hwnd = user32.GetDesktopWindow()
+        if not hwnd:
+            return False
+
+        # Load icon.ico (16x16)
+        hicon = None
+        icon_path = resource_path("icon.ico")
+        if os.path.isfile(icon_path):
+            hicon = user32.LoadImageW(
+                None, icon_path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE
+            )
+
+        if not hicon:
+            hicon = user32.LoadIconW(None, ctypes.c_wchar_p(IDI_INFORMATION))
+
+        nid = NOTIFYICONDATA()
+        nid.cbSize = ctypes.sizeof(NOTIFYICONDATA)
+        nid.hWnd = hwnd
+        nid.uID = 1
+        nid.uFlags = NIF_ICON | NIF_TIP | NIF_INFO | NIF_SHOWTIP
+        nid.hIcon = hicon
+        nid.szTip = APP_DISPLAY_NAME
+        nid.dwInfoFlags = NIIF_INFO
+        nid.uVersion = 4
+
+        result = shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
+        if not result:
+            return False
+
+        shell32.Shell_NotifyIconW(NIM_SETVERSION, ctypes.byref(nid))
+
+        _balloon_state['hwnd'] = hwnd
+        _balloon_state['hicon'] = hicon
+        _balloon_state['nid'] = nid
+        _balloon_state['icon_added'] = True
+
+        return True
+
+    except Exception:
+        return False
+
+
+def show_balloon_tip(title, message, timeout=5, kind='info', silent=False):
+    if sys.platform != 'win32':
+        return False
+
+    if not _balloon_state['icon_added']:
+        if not _init_balloon_system():
+            return False
+
+    try:
+        shell32 = ctypes.windll.shell32
+        nid = _balloon_state['nid']
+
+        flag_map = {
+            'none':    NIIF_NONE,
+            'info':    NIIF_INFO,
+            'warning': NIIF_WARNING,
+            'error':   NIIF_ERROR,
+        }
+        info_flags = flag_map.get(kind, NIIF_INFO)
+        if silent:
+            info_flags |= NIIF_NOSOUND
+
+        nid.szInfoTitle = (title or "")[:63]
+        nid.szInfo = (message or "")[:255]
+        nid.dwInfoFlags = info_flags
+
+        result = shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(nid))
+        if not result:
+            return False
+
+        return True
+
+    except Exception:
+        return False
+
+
+def shutdown_balloon_system():
+    """Call when the application is quitted - delete icon from tray"""
+    if not _balloon_state['icon_added']:
+        return
+
+    try:
+        shell32 = ctypes.windll.shell32
+        user32 = ctypes.windll.user32
+
+        shell32.Shell_NotifyIconW.argtypes = [
+            wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATA),
+        ]
+        shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+
+        nid = _balloon_state['nid']
+        shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid))
+
+        if _balloon_state['hicon']:
+            user32.DestroyIcon(_balloon_state['hicon'])
+
+        # DO NOT using DestroyWindow - hwnd is desktop window
+
+        _balloon_state['icon_added'] = False
+        _balloon_state['hwnd'] = None
+        _balloon_state['nid'] = None
+        _balloon_state['hicon'] = None
+
+    except Exception:
+        pass
+
+
+# ============================================================
+# WINDOWS-STYLE NOTIFICATION (fallback for non-Windows)
+# ============================================================
+
+class WindowsToast(QWidget):
+    """Custom notification - fallback when it is not Windows"""
+
+    ICONS = {
+        'info':    ('ⓘ', '#0078d4'),
+        'success': ('✓', '#107c10'),
+        'warning': ('⚠', '#ff8c00'),
+        'error':   ('✕', '#d13438'),
+    }
+
+    def __init__(self, parent, message, duration=5000,
+                 dark_mode=False, kind='info'):
+        super().__init__(parent)
+
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.duration = duration
+        self.dark_mode = dark_mode
+
+        if dark_mode:
+            bg = "#2d2d2d"
+            border = "#3d3d3d"
+            text = "#e0e0e0"
+        else:
+            bg = "#f3f3f3"
+            border = "#d0d0d0"
+            text = "#1a1a1a"
+
+        icon_char, accent = self.ICONS.get(kind, self.ICONS['info'])
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(12)
+
+        self.icon_label = QLabel(icon_char)
+        self.icon_label.setFixedSize(28, 28)
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_label.setStyleSheet(f"""
+            QLabel {{
+                color: white;
+                background-color: {accent};
+                border-radius: 14px;
+                font-size: 14pt;
+                font-weight: bold;
+            }}
+        """)
+        layout.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        self.msg_label = QLabel(message)
+        self.msg_label.setWordWrap(True)
+        self.msg_label.setStyleSheet(f"""
+            QLabel {{
+                color: {text};
+                font-size: 10.5pt;
+                background: transparent;
+            }}
+        """)
+        self.msg_label.setMaximumWidth(320)
+        layout.addWidget(self.msg_label, 1)
+
+        self.setStyleSheet(f"""
+            WindowsToast {{
+                background-color: {bg};
+                border: 1px solid {border};
+                border-left: 4px solid {accent};
+                border-radius: 4px;
+            }}
+        """)
+
+        self.adjustSize()
+
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.opacity_effect.setOpacity(1.0)
+        self.setGraphicsEffect(self.opacity_effect)
+
+        self.fade_anim = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.fade_anim.setDuration(250)
+        self.fade_anim.finished.connect(self._on_fade_finished)
+        self._closing = False
+
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.dismiss)
+        self.timer.start(duration)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.dismiss()
+        super().mousePressEvent(event)
+
+    def dismiss(self):
+        if self._closing:
+            return
+        self._closing = True
+        self.timer.stop()
+        self.fade_anim.stop()
+        self.fade_anim.setStartValue(self.opacity_effect.opacity())
+        self.fade_anim.setEndValue(0.0)
+        self.fade_anim.start()
+
+    def _on_fade_finished(self):
+        self.close()
 
 
 # ============================================================
@@ -202,11 +570,9 @@ class CodeEditor(QPlainTextEdit):
         self.font_family = "Consolas"
         self.font_size = 14
 
-        # v5.0 settings
         self.indent_size = indent_size
 
-        # v6.0: bookmarks
-        self.bookmarks = set()  # set of 1-based line numbers
+        self.bookmarks = set()
         self.file_path = file_path
 
         font = QFont(self.font_family, self.font_size)
@@ -229,17 +595,14 @@ class CodeEditor(QPlainTextEdit):
 
         self.update_colors()
 
-        # Update line numbers when text changes or scroll
         self.textChanged.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.update_line_number_area)
         self.blockCountChanged.connect(self.update_line_number_area_width)
-        self.updateRequest.connect(self.update_line_number_area_request)
 
         self.update_line_number_area_width()
         self.update_line_number_area()
 
     def update_line_number_area_width(self):
-        """Adjust line number area width based on number of digits"""
         digits = 1
         max_num = max(1, self.blockCount())
         while max_num >= 10:
@@ -272,9 +635,98 @@ class CodeEditor(QPlainTextEdit):
             return 4
         return self.indent_size
 
-    # ============ BOOKMARKS (v6.0) ============
+    def convert_tabs_to_spaces(self):
+        indent_size = self.get_indent_width()
+        if indent_size == 0:
+            indent_size = 4
+
+        cursor = self.textCursor()
+        original_pos = cursor.position()
+        scroll_pos = self.verticalScrollBar().value()
+
+        text = self.toPlainText()
+        lines = text.split('\n')
+        changed = False
+
+        new_lines = []
+        for line in lines:
+            leading_tabs = 0
+            for ch in line:
+                if ch == '\t':
+                    leading_tabs += 1
+                else:
+                    break
+            if leading_tabs > 0:
+                new_line = ' ' * (leading_tabs * indent_size) + line[leading_tabs:]
+                new_lines.append(new_line)
+                changed = True
+            else:
+                new_lines.append(line)
+
+        if not changed:
+            return False
+
+        new_text = '\n'.join(new_lines)
+
+        self.blockSignals(True)
+        self.setPlainText(new_text)
+        self.blockSignals(False)
+
+        doc_len = self.document().characterCount() - 1
+        new_pos = min(original_pos, doc_len)
+        cursor.setPosition(new_pos)
+        self.setTextCursor(cursor)
+        self.verticalScrollBar().setValue(scroll_pos)
+        return True
+
+    def convert_spaces_to_tabs(self):
+        indent_size = self.get_indent_width()
+        if indent_size == 0:
+            indent_size = 4
+
+        cursor = self.textCursor()
+        original_pos = cursor.position()
+        scroll_pos = self.verticalScrollBar().value()
+
+        text = self.toPlainText()
+        lines = text.split('\n')
+        changed = False
+
+        new_lines = []
+        for line in lines:
+            leading_spaces = 0
+            for ch in line:
+                if ch == ' ':
+                    leading_spaces += 1
+                else:
+                    break
+
+            if leading_spaces >= indent_size:
+                num_tabs = leading_spaces // indent_size
+                remaining = leading_spaces % indent_size
+                new_line = '\t' * num_tabs + ' ' * remaining + line[leading_spaces:]
+                new_lines.append(new_line)
+                changed = True
+            else:
+                new_lines.append(line)
+
+        if not changed:
+            return False
+
+        new_text = '\n'.join(new_lines)
+
+        self.blockSignals(True)
+        self.setPlainText(new_text)
+        self.blockSignals(False)
+
+        doc_len = self.document().characterCount() - 1
+        new_pos = min(original_pos, doc_len)
+        cursor.setPosition(new_pos)
+        self.setTextCursor(cursor)
+        self.verticalScrollBar().setValue(scroll_pos)
+        return True
+
     def toggle_bookmark(self):
-        """Toggle bookmark at current line"""
         cursor = self.textCursor()
         line_num = cursor.blockNumber() + 1
 
@@ -286,23 +738,18 @@ class CodeEditor(QPlainTextEdit):
         self.line_number_area.update()
 
     def next_bookmark(self):
-        """Jump to next bookmark (wrap around)"""
         if not self.bookmarks:
             return False
 
         cursor = self.textCursor()
         current_line = cursor.blockNumber() + 1
-
         sorted_bm = sorted(self.bookmarks)
 
-        # Find first bookmark > current line
         next_bm = None
         for bm in sorted_bm:
             if bm > current_line:
                 next_bm = bm
                 break
-
-        # Wrap around
         if next_bm is None:
             next_bm = sorted_bm[0]
 
@@ -310,23 +757,18 @@ class CodeEditor(QPlainTextEdit):
         return True
 
     def prev_bookmark(self):
-        """Jump to previous bookmark (wrap around)"""
         if not self.bookmarks:
             return False
 
         cursor = self.textCursor()
         current_line = cursor.blockNumber() + 1
-
         sorted_bm = sorted(self.bookmarks, reverse=True)
 
-        # Find first bookmark < current line
         prev_bm = None
         for bm in sorted_bm:
             if bm < current_line:
                 prev_bm = bm
                 break
-
-        # Wrap around
         if prev_bm is None:
             prev_bm = sorted(self.bookmarks)[-1]
 
@@ -334,14 +776,12 @@ class CodeEditor(QPlainTextEdit):
         return True
 
     def clear_all_bookmarks(self):
-        """Clear all bookmarks in current file"""
         if not self.bookmarks:
             return
         self.bookmarks.clear()
         self.line_number_area.update()
 
     def _goto_line(self, line_num):
-        """Move cursor to specified line (1-based)"""
         block = self.document().findBlockByLineNumber(line_num - 1)
         if block.isValid():
             cursor = QTextCursor(block)
@@ -349,7 +789,6 @@ class CodeEditor(QPlainTextEdit):
             self.centerCursor()
 
     def load_bookmarks(self, bookmarks_list):
-        """Load bookmarks from a list of line numbers"""
         self.bookmarks = set()
         max_lines = self.blockCount()
         for line_num in bookmarks_list:
@@ -361,10 +800,6 @@ class CodeEditor(QPlainTextEdit):
                 continue
         self.line_number_area.update()
 
-    def get_bookmark_count(self):
-        return len(self.bookmarks)
-
-    # ============ DRAG & DROP ============
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.ignore()
@@ -433,13 +868,13 @@ class CodeEditor(QPlainTextEdit):
             self.bg_color = QColor(30, 30, 30)
             self.line_number_bg = QColor(40, 40, 40)
             self.line_number_fg = QColor(100, 100, 100)
-            self.bookmark_color = QColor(255, 255, 255)  # white
+            self.bookmark_color = QColor(255, 255, 255)
         else:
             self.text_color = QColor(0, 0, 0)
             self.bg_color = QColor(255, 255, 255)
             self.line_number_bg = QColor(240, 240, 240)
             self.line_number_fg = QColor(128, 128, 128)
-            self.bookmark_color = QColor(0, 0, 0)  # black
+            self.bookmark_color = QColor(0, 0, 0)
 
         palette = self.palette()
         palette.setColor(palette.ColorRole.Base, self.bg_color)
@@ -461,7 +896,6 @@ class CodeEditor(QPlainTextEdit):
         self.dark_mode = dark_mode
         self.update_colors()
 
-    # ============ EXPAND BRACKET PAIR ============
     def expand_bracket_pair(self, open_char, close_char):
         cursor = self.textCursor()
 
@@ -495,7 +929,6 @@ class CodeEditor(QPlainTextEdit):
         cursor.setPosition(open_pos + 1 + len(inner_indent))
         self.setTextCursor(cursor)
 
-    # ============ DELETE BRACKET PAIR ============
     def delete_bracket_pair(self):
         cursor = self.textCursor()
         pos = cursor.position()
@@ -519,7 +952,6 @@ class CodeEditor(QPlainTextEdit):
 
         return False
 
-    # ============ TRIM TRAILING SPACES ============
     def trim_trailing_spaces(self):
         cursor = self.textCursor()
         original_pos = cursor.position()
@@ -544,7 +976,6 @@ class CodeEditor(QPlainTextEdit):
             return True
         return False
 
-    # ============ WORD COUNT ============
     def get_word_count(self):
         text = self.toPlainText()
 
@@ -567,7 +998,6 @@ class CodeEditor(QPlainTextEdit):
             'paragraphs': paragraph_count
         }
 
-    # ============ AUTO-SCROLL ============
     def start_auto_scroll(self, pos):
         self.auto_scroll_active = True
         self.auto_scroll_anchor = pos
@@ -632,7 +1062,6 @@ class CodeEditor(QPlainTextEdit):
         if self.auto_scroll_active:
             self.stop_auto_scroll()
 
-        # Handle Tab manually
         if event.key() == Qt.Key.Key_Tab and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
             cursor = self.textCursor()
             if cursor.hasSelection():
@@ -663,25 +1092,21 @@ class CodeEditor(QPlainTextEdit):
             event.accept()
             return
 
-        # Handle Backtab (Shift+Tab)
         if event.key() == Qt.Key.Key_Backtab:
             self.unindent_selection()
             event.accept()
             return
 
-        # Handle Enter
         if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
             self.handle_enter_key()
             event.accept()
             return
 
-        # Handle Backspace/Delete for bracket pair
         if event.key() == Qt.Key.Key_Backspace or event.key() == Qt.Key.Key_Delete:
             if self.delete_bracket_pair():
                 event.accept()
                 return
 
-        # Handle bracket smart typing
         if self.handle_bracket_smart(event):
             event.accept()
             return
@@ -692,7 +1117,6 @@ class CodeEditor(QPlainTextEdit):
         if self.auto_scroll_active:
             self.stop_auto_scroll()
 
-        # Ctrl + wheel -> zoom font
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             delta = event.angleDelta().y()
             if delta > 0:
@@ -703,7 +1127,6 @@ class CodeEditor(QPlainTextEdit):
             event.accept()
             return
 
-        # Shift + wheel -> horizontal scroll
         if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
             delta = event.angleDelta().y()
             if delta == 0:
@@ -726,7 +1149,6 @@ class CodeEditor(QPlainTextEdit):
 
         super().wheelEvent(event)
 
-    # ============ INDENT / UNINDENT ============
     def indent_selection(self):
         cursor = self.textCursor()
         original_pos = cursor.position()
@@ -830,7 +1252,6 @@ class CodeEditor(QPlainTextEdit):
 
         self.setTextCursor(cursor)
 
-    # ============ COMMENT/UNCOMMENT ============
     def toggle_comment(self):
         cursor = self.textCursor()
         start = cursor.selectionStart()
@@ -895,7 +1316,6 @@ class CodeEditor(QPlainTextEdit):
         cursor.setPosition(start_line_pos + len(new_text), QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(cursor)
 
-    # ============ BRACKET SMART TYPING ============
     def handle_bracket_smart(self, event):
         open_brackets = {
             Qt.Key.Key_ParenLeft: ('(', ')'),
@@ -1000,9 +1420,7 @@ class CodeEditor(QPlainTextEdit):
 
         self.setTextCursor(cursor)
 
-    # ============ BOOKMARK ICON + LINE NUMBER PAINT ============
     def _draw_bookmark_icon(self, painter, x, y):
-        """Draw a solid bookmark ribbon at (x, y)"""
         h = self.fontMetrics().height() - 2
         w = max(int(h * 0.7), 6)
         notch = max(int(h * 0.35), 3)
@@ -1020,7 +1438,6 @@ class CodeEditor(QPlainTextEdit):
         painter.drawPolygon(*points)
 
     def line_number_area_paint(self, event):
-        """Paint line numbers + bookmark icons"""
         painter = QPainter(self.line_number_area)
         painter.fillRect(event.rect(), self.line_number_bg)
 
@@ -1038,11 +1455,9 @@ class CodeEditor(QPlainTextEdit):
                 has_bookmark = line_num in self.bookmarks
 
                 if has_bookmark:
-                    # Draw bookmark icon instead of line number
                     icon_y = int(top + (line_height - (self.fontMetrics().height() - 2)) / 2)
                     self._draw_bookmark_icon(painter, 5, icon_y)
                 else:
-                    # Draw line number
                     number = str(line_num)
                     text_y = int(top + (self.fontMetrics().height() - font_metrics.height()) / 2 + font_metrics.ascent())
                     painter.setPen(self.line_number_fg)
@@ -1101,6 +1516,12 @@ class CustomTabWidget(QTabWidget):
         self.setTabsClosable(True)
         self.setMovable(True)
         self.setDocumentMode(True)
+
+        # v6.0: Elide tên file dài, không giãn tab
+        self.setElideMode(Qt.TextElideMode.ElideMiddle)
+        self.tabBar().setExpanding(False)
+        self.tabBar().setUsesScrollButtons(True)
+
         self.tabCloseRequested.connect(self.on_tab_close_requested)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.on_tab_context_menu)
@@ -1114,13 +1535,12 @@ class CustomTabWidget(QTabWidget):
         index = tab_bar.tabAt(pos)
         if index < 0:
             return
-
         if self.parent_notepad:
             self.parent_notepad.show_tab_context_menu(index, tab_bar.mapToGlobal(pos))
 
 
 # ============================================================
-# BOOKMARK LIST DIALOG (v6.0)
+# BOOKMARK LIST DIALOG
 # ============================================================
 
 class BookmarkListDialog(QDialog):
@@ -1138,7 +1558,6 @@ class BookmarkListDialog(QDialog):
         layout = QVBoxLayout()
         layout.setSpacing(12)
 
-        # Summary
         count = len(editor.bookmarks)
         if count == 0:
             summary_text = "No bookmarks in this file"
@@ -1151,7 +1570,6 @@ class BookmarkListDialog(QDialog):
         self.summary_label.setStyleSheet("font-size: 11pt; font-weight: bold;")
         layout.addWidget(self.summary_label)
 
-        # Table
         self.table = QTableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["#", "Line", "Content"])
@@ -1162,7 +1580,6 @@ class BookmarkListDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.doubleClicked.connect(self._on_double_click)
 
-        # Column widths
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
@@ -1172,23 +1589,19 @@ class BookmarkListDialog(QDialog):
 
         layout.addWidget(self.table)
 
-        # Buttons
         button_row = QHBoxLayout()
         button_row.addStretch()
 
         self.go_to_btn = QPushButton("Go To")
         self.go_to_btn.clicked.connect(self._go_to_selected)
-        self.go_to_btn.setEnabled(count > 0)
         button_row.addWidget(self.go_to_btn)
 
         self.remove_btn = QPushButton("Remove")
         self.remove_btn.clicked.connect(self._remove_selected)
-        self.remove_btn.setEnabled(count > 0)
         button_row.addWidget(self.remove_btn)
 
         self.clear_btn = QPushButton("Clear All")
         self.clear_btn.clicked.connect(self._clear_all)
-        self.clear_btn.setEnabled(count > 0)
         button_row.addWidget(self.clear_btn)
 
         close_btn = QPushButton("Close")
@@ -1198,38 +1611,28 @@ class BookmarkListDialog(QDialog):
         layout.addLayout(button_row)
 
         self.setLayout(layout)
-
-        # Populate table
         self._refresh_table()
 
     def _refresh_table(self):
-        """Rebuild the table from editor.bookmarks"""
         sorted_bookmarks = sorted(self.editor.bookmarks)
-
         self.table.setRowCount(len(sorted_bookmarks))
-
         doc = self.editor.document()
 
         for row, line_num in enumerate(sorted_bookmarks):
-            # Column 0: Order number
             item_num = QTableWidgetItem(str(row + 1))
             item_num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, 0, item_num)
 
-            # Column 1: Line number
             item_line = QTableWidgetItem(str(line_num))
             item_line.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, 1, item_line)
 
-            # Column 2: Content preview
             block = doc.findBlockByLineNumber(line_num - 1)
             content = block.text() if block.isValid() else ""
             if len(content) > 80:
                 content = content[:77] + "..."
-            item_content = QTableWidgetItem(content)
-            self.table.setItem(row, 2, item_content)
+            self.table.setItem(row, 2, QTableWidgetItem(content))
 
-        # Update summary
         count = len(sorted_bookmarks)
         if count == 0:
             summary_text = "No bookmarks in this file"
@@ -1239,13 +1642,11 @@ class BookmarkListDialog(QDialog):
             summary_text = f"Total: {count} bookmarks"
         self.summary_label.setText(summary_text)
 
-        # Update button states
         self.go_to_btn.setEnabled(count > 0)
         self.remove_btn.setEnabled(count > 0)
         self.clear_btn.setEnabled(count > 0)
 
     def _get_selected_line(self):
-        """Return the line number of the selected row, or None"""
         row = self.table.currentRow()
         if row < 0:
             return None
@@ -1258,7 +1659,6 @@ class BookmarkListDialog(QDialog):
             return None
 
     def _on_double_click(self, index):
-        """Handle double-click on row"""
         self._go_to_selected()
 
     def _go_to_selected(self):
@@ -1307,7 +1707,6 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout()
         layout.setSpacing(15)
 
-        # ============ EDITOR SECTION ============
         editor_group = QGroupBox("Editor")
         editor_layout = QVBoxLayout()
 
@@ -1383,7 +1782,6 @@ class SettingsDialog(QDialog):
         editor_group.setLayout(editor_layout)
         layout.addWidget(editor_group)
 
-        # ============ APPEARANCE SECTION ============
         appearance_group = QGroupBox("Appearance")
         appearance_layout = QVBoxLayout()
 
@@ -1404,7 +1802,6 @@ class SettingsDialog(QDialog):
         appearance_group.setLayout(appearance_layout)
         layout.addWidget(appearance_group)
 
-        # ============ EDITOR BEHAVIOR ============
         behavior_group = QGroupBox("Editor behavior")
         behavior_layout = QVBoxLayout()
 
@@ -1430,7 +1827,6 @@ class SettingsDialog(QDialog):
 
         layout.addStretch()
 
-        # ============ BUTTONS ============
         button_row = QHBoxLayout()
 
         reset_btn = QPushButton("Reset to Default")
@@ -1452,7 +1848,6 @@ class SettingsDialog(QDialog):
 
         self.setLayout(layout)
 
-        # ============ DIRTY TRACKING ============
         self._dirty = False
         self._suppress_dirty = False
 
@@ -1595,14 +1990,15 @@ class MyNotepad(QMainWindow):
         self.show_line_numbers = True
         self.trim_on_save = False
 
-        # v5.0
         self.indent_size = 4
         self.restore_tabs = True
 
-        # v6.0
-        self.recent_files = []  # list of file paths, max 10
+        self.recent_files = []
 
         self.tabs = []
+
+        # v6.0: Toast fallback
+        self._current_toast = None
 
         self.dragging_tab = False
         self.drag_start_pos = None
@@ -1691,7 +2087,6 @@ class MyNotepad(QMainWindow):
         new_window.apply_font()
         new_window.show()
 
-    # ============ SESSION RESTORE ============
     def restore_session(self):
         if not self.restore_tabs:
             return False
@@ -1715,13 +2110,10 @@ class MyNotepad(QMainWindow):
         for i, file_path in enumerate(session_files):
             if not file_path or not os.path.isfile(file_path):
                 continue
-
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-
                 tab = self.add_new_tab(file_path, content)
-
                 if i < len(session_positions):
                     try:
                         pos = int(session_positions[i])
@@ -1732,7 +2124,6 @@ class MyNotepad(QMainWindow):
                         tab.editor.setTextCursor(cursor)
                     except (ValueError, TypeError):
                         pass
-
                 opened += 1
             except Exception:
                 continue
@@ -1774,9 +2165,7 @@ class MyNotepad(QMainWindow):
         settings.setValue("session_positions", positions)
         settings.setValue("session_active", self.tab_widget.currentIndex())
 
-    # ============ BOOKMARKS PERSISTENCE (v6.0) ============
     def load_bookmarks_for(self, file_path):
-        """Load bookmarks for a file"""
         if not file_path:
             return []
         key = f"bookmarks/{path_hash(file_path)}"
@@ -1787,7 +2176,6 @@ class MyNotepad(QMainWindow):
         return value if isinstance(value, list) else []
 
     def save_bookmarks_for(self, file_path, bookmarks):
-        """Save bookmarks for a file"""
         if not file_path:
             return
         key = f"bookmarks/{path_hash(file_path)}"
@@ -1798,62 +2186,39 @@ class MyNotepad(QMainWindow):
             settings.remove(key)
 
     def save_all_bookmarks(self):
-        """Save bookmarks for all tabs"""
         for tab in self.tabs:
             if tab.file_path:
                 self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
 
-    # ============ RECENT FILES (v6.0) ============
     def add_recent_file(self, file_path):
-        """Add file to recent files list"""
         if not file_path:
             return
-
-        # Remove if already exists
         if file_path in self.recent_files:
             self.recent_files.remove(file_path)
-
-        # Insert at beginning
         self.recent_files.insert(0, file_path)
-
-        # Limit to 10
         self.recent_files = self.recent_files[:10]
-
-        # Save
         settings = QSettings("coding-pudding", "coding-pudding")
         settings.setValue("recent_files", self.recent_files)
-
-        # Rebuild menu
         self.rebuild_recent_menu()
 
     def clear_recent_files(self):
-        """Clear all recent files"""
         self.recent_files = []
         settings = QSettings("coding-pudding", "coding-pudding")
         settings.remove("recent_files")
         self.rebuild_recent_menu()
 
     def rebuild_recent_menu(self):
-        """Rebuild the 'Open Recent' submenu"""
         if not hasattr(self, 'recent_menu'):
             return
-
         self.recent_menu.clear()
 
-        # Filter out non-existent files
-        existing = []
-        for path in self.recent_files:
-            if os.path.isfile(path):
-                existing.append(path)
-
-        # Update self.recent_files if we removed some
+        existing = [p for p in self.recent_files if os.path.isfile(p)]
         if len(existing) != len(self.recent_files):
             self.recent_files = existing
             settings = QSettings("coding-pudding", "coding-pudding")
             settings.setValue("recent_files", self.recent_files)
 
         if not existing:
-            # Disable menu
             no_recent = QAction("(No recent files)", self)
             no_recent.setEnabled(False)
             self.recent_menu.addAction(no_recent)
@@ -1877,13 +2242,11 @@ class MyNotepad(QMainWindow):
         self.recent_menu.addAction(clear_action)
 
     def open_recent_file(self, file_path):
-        """Open a file from recent files list (always creates new tab)"""
         if not os.path.isfile(file_path):
             QMessageBox.warning(
                 self, "File Not Found",
                 f"The file no longer exists:\n{file_path}"
             )
-            # Remove from list
             if file_path in self.recent_files:
                 self.recent_files.remove(file_path)
                 settings = QSettings("coding-pudding", "coding-pudding")
@@ -1896,7 +2259,6 @@ class MyNotepad(QMainWindow):
                 content = f.read()
             self.add_new_tab(file_path, content)
             self.apply_font()
-            # Move to top of recent list
             self.add_recent_file(file_path)
         except Exception as e:
             QMessageBox.critical(
@@ -1904,7 +2266,6 @@ class MyNotepad(QMainWindow):
                 f"Could not open file:\n{file_path}\n\n{str(e)}"
             )
 
-    # ============ SETTINGS LOAD/SAVE ============
     def load_settings(self):
         settings = QSettings("coding-pudding", "coding-pudding")
         geometry = settings.value("geometry")
@@ -1930,11 +2291,9 @@ class MyNotepad(QMainWindow):
         self.show_line_numbers = settings.value("show_line_numbers", True, type=bool)
         self.trim_on_save = settings.value("trim_on_save", False, type=bool)
 
-        # v5.0
         self.indent_size = settings.value("indent_size", 4, type=int)
         self.restore_tabs = settings.value("restore_tabs", True, type=bool)
 
-        # v6.0 - recent files
         recent = settings.value("recent_files", [])
         if isinstance(recent, str):
             recent = [recent]
@@ -1968,7 +2327,7 @@ class MyNotepad(QMainWindow):
             self,
             self.dark_mode,
             indent_size=self.indent_size,
-            file_path=file_path
+            file_path=file_path,
         )
         editor.font_family = self.font_family
         editor.font_size = self.font_size
@@ -2001,7 +2360,6 @@ class MyNotepad(QMainWindow):
         else:
             tab.original_content = ""
 
-        # v6.0: load bookmarks for this file
         if file_path:
             bm_list = self.load_bookmarks_for(file_path)
             editor.load_bookmarks(bm_list)
@@ -2011,7 +2369,6 @@ class MyNotepad(QMainWindow):
         self.tab_widget.setTabToolTip(index, tab.get_tooltip())
         self.tab_widget.setCurrentIndex(index)
 
-        # v6.0: add to recent files
         if file_path:
             self.add_recent_file(file_path)
 
@@ -2047,7 +2404,6 @@ class MyNotepad(QMainWindow):
             elif reply == QMessageBox.StandardButton.Cancel:
                 return
 
-        # v6.0: save bookmarks before closing
         if tab.file_path:
             self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
 
@@ -2057,7 +2413,183 @@ class MyNotepad(QMainWindow):
             self.add_new_tab()
         self.update_title()
 
-    # ============ CLOSE ALL / CLOSE OTHERS ============
+    def save_all_tabs(self):
+        modified_tabs = [(i, t) for i, t in enumerate(self.tabs) if t.is_modified]
+
+        if not modified_tabs:
+            self.status_bar.showMessage("There is nothing to save", 2000)
+            return
+
+        saved = 0
+        for i, tab in modified_tabs:
+            if tab.file_path:
+                try:
+                    content = tab.editor.toPlainText()
+                    with open(tab.file_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                    tab.is_modified = False
+                    tab.original_content = content
+                    self.update_tab_title(i)
+                    self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
+                    saved += 1
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Could not save file:\n{tab.file_path}\n\n{str(e)}")
+                    self.status_bar.showMessage(f"Save failed after {saved} file(s)", 3000)
+                    self.update_title()
+                    return
+            else:
+                self.tab_widget.setCurrentIndex(i)
+                file_path, _ = QFileDialog.getSaveFileName(
+                    self, "Save File", "",
+                    "Python Files (*.py);;Text Files (*.txt);;All Files (*)"
+                )
+                if not file_path:
+                    self.status_bar.showMessage(f"Save cancelled. Saved {saved} file(s)", 3000)
+                    self.update_title()
+                    return
+                try:
+                    content = tab.editor.toPlainText()
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                    tab.file_path = file_path
+                    tab.editor.file_path = file_path
+                    tab.is_modified = False
+                    tab.original_content = content
+                    self.update_tab_title(i)
+                    self.add_recent_file(file_path)
+                    saved += 1
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Could not save file:\n{file_path}\n\n{str(e)}")
+                    self.status_bar.showMessage(f"Save failed after {saved} file(s)", 3000)
+                    self.update_title()
+                    return
+
+        self.update_title()
+        if saved == 1:
+            self.status_bar.showMessage(f"Saved 1 file", 2000)
+            self.show_toast("Saved 1 file", kind='success')
+        else:
+            self.status_bar.showMessage(f"Saved {saved} files", 2000)
+            self.show_toast(f"Saved {saved} files", kind='success')
+
+    def reload_all_tabs(self):
+        tabs_with_path = [t for t in self.tabs if t.file_path]
+
+        if not tabs_with_path:
+            self.status_bar.showMessage("No files to reload", 2000)
+            return
+
+        modified = [t for t in tabs_with_path if t.is_modified]
+        if modified:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Unsaved Changes")
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            msg_box.setText(f"{len(modified)} tab(s) have unsaved changes.")
+            msg_box.setInformativeText("Reload anyway? All unsaved changes will be lost.")
+            msg_box.setStandardButtons(
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+            )
+            msg_box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+            msg_box.button(QMessageBox.StandardButton.Yes).setText("Reload")
+            msg_box.button(QMessageBox.StandardButton.Cancel).setText("Cancel")
+            reply = msg_box.exec()
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        reloaded = 0
+        errors = []
+
+        for i, tab in enumerate(self.tabs):
+            if not tab.file_path:
+                continue
+
+            try:
+                with open(tab.file_path, 'r', encoding='utf-8') as f:
+                    new_content = f.read()
+            except Exception as e:
+                errors.append(f"{os.path.basename(tab.file_path)}: {str(e)}")
+                continue
+
+            current_content = tab.editor.toPlainText()
+            if current_content == new_content and not tab.is_modified:
+                continue
+
+            cursor_pos = tab.editor.textCursor().position()
+
+            tab.editor.blockSignals(True)
+            tab.editor.setPlainText(new_content)
+            tab.editor.blockSignals(False)
+            tab.editor.apply_font()
+            tab.original_content = new_content
+            tab.is_modified = False
+            self.update_tab_title(i)
+
+            doc_len = tab.editor.document().characterCount() - 1
+            new_pos = min(cursor_pos, max(0, doc_len))
+            cursor = tab.editor.textCursor()
+            cursor.setPosition(new_pos)
+            tab.editor.setTextCursor(cursor)
+
+            reloaded += 1
+
+        self.update_title()
+
+        if errors:
+            error_msg = "\n".join(errors[:5])
+            if len(errors) > 5:
+                error_msg += f"\n... and {len(errors) - 5} more"
+            QMessageBox.warning(
+                self, "Reload Errors",
+                f"Some files could not be reloaded:\n\n{error_msg}"
+            )
+
+        if reloaded == 0 and not errors:
+            self.status_bar.showMessage("All files are up to date", 2000)
+            self.show_toast("All files are up to date", kind='info')
+        elif reloaded == 1:
+            self.status_bar.showMessage(f"Reloaded 1 file", 2000)
+            self.show_toast("Reloaded 1 file", kind='success')
+        else:
+            self.status_bar.showMessage(f"Reloaded {reloaded} files", 2000)
+            self.show_toast(f"Reloaded {reloaded} files", kind='success')
+
+
+    def convert_tabs_to_spaces(self):
+        editor = self.current_editor()
+        if not isinstance(editor, CodeEditor):
+            return
+        if not editor.toPlainText():
+            self.status_bar.showMessage("File is empty", 2000)
+            return
+        if editor.convert_tabs_to_spaces():
+            self.status_bar.showMessage("Converted tabs to spaces", 2000)
+            self.show_toast("Converted tabs to spaces", kind='success')
+            tab = self.current_tab()
+            if tab:
+                tab.is_modified = True
+                self.update_tab_title()
+                self.update_title()
+        else:
+            self.status_bar.showMessage("No tabs found", 2000)
+
+    def convert_spaces_to_tabs(self):
+        editor = self.current_editor()
+        if not isinstance(editor, CodeEditor):
+            return
+        if not editor.toPlainText():
+            self.status_bar.showMessage("File is empty", 2000)
+            return
+        if editor.convert_spaces_to_tabs():
+            self.status_bar.showMessage("Converted spaces to tabs", 2000)
+            self.show_toast("Converted spaces to tabs", kind='success')
+            tab = self.current_tab()
+            if tab:
+                tab.is_modified = True
+                self.update_tab_title()
+                self.update_title()
+        else:
+            self.status_bar.showMessage("No leading spaces found", 2000)
+
     def close_all_tabs(self):
         if not self.tabs:
             return
@@ -2095,7 +2627,6 @@ class MyNotepad(QMainWindow):
             else:
                 return
 
-        # Save bookmarks for all tabs
         self.save_all_bookmarks()
 
         self.tab_widget.blockSignals(True)
@@ -2153,7 +2684,6 @@ class MyNotepad(QMainWindow):
             else:
                 return
 
-        # Save bookmarks for closing tabs
         for i, tab in enumerate(self.tabs):
             if i != current_index and tab.file_path:
                 self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
@@ -2168,7 +2698,6 @@ class MyNotepad(QMainWindow):
         self.tab_widget.setCurrentIndex(0)
         self.update_title()
 
-    # ============ TAB CONTEXT MENU ============
     def show_tab_context_menu(self, index, global_pos):
         if index < 0 or index >= len(self.tabs):
             return
@@ -2241,7 +2770,6 @@ class MyNotepad(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        # Save bookmarks for closing tabs
         for i in range(index + 1, len(self.tabs)):
             if self.tabs[i].file_path:
                 self.save_bookmarks_for(self.tabs[i].file_path, self.tabs[i].editor.bookmarks)
@@ -2269,7 +2797,6 @@ class MyNotepad(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        # Save bookmarks for closing tabs
         for i in range(0, index):
             if self.tabs[i].file_path:
                 self.save_bookmarks_for(self.tabs[i].file_path, self.tabs[i].editor.bookmarks)
@@ -2292,6 +2819,7 @@ class MyNotepad(QMainWindow):
             tab = self.tabs[index]
             if tab.file_path:
                 QApplication.clipboard().setText(tab.file_path)
+                self.show_toast("Copied full path", kind='success')
 
     def _copy_tab_name(self, index):
         if 0 <= index < len(self.tabs):
@@ -2300,6 +2828,7 @@ class MyNotepad(QMainWindow):
                 QApplication.clipboard().setText(os.path.basename(tab.file_path))
             else:
                 QApplication.clipboard().setText("Untitled")
+            self.show_toast("Copied file name", kind='success')
 
     def _open_containing_folder(self, index):
         if 0 <= index < len(self.tabs):
@@ -2335,7 +2864,6 @@ class MyNotepad(QMainWindow):
         try:
             os.rename(old_path, new_path)
 
-            # Migrate bookmarks
             old_bookmarks = self.load_bookmarks_for(old_path)
             if old_bookmarks:
                 self.save_bookmarks_for(new_path, old_bookmarks)
@@ -2378,6 +2906,7 @@ class MyNotepad(QMainWindow):
             tab.is_modified = False
             self.update_tab_title(index)
             self.update_title()
+            self.show_toast("Reloaded from disk", kind='success')
         except Exception as e:
             QMessageBox.critical(self, "Reload Error", f"Cannot reload file:\n{e}")
 
@@ -2410,7 +2939,6 @@ class MyNotepad(QMainWindow):
                 tab.original_content = content
                 self.update_tab_title(index)
                 self.update_title()
-                # Save bookmarks after save
                 self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
                 return True
             except Exception as e:
@@ -2442,7 +2970,6 @@ class MyNotepad(QMainWindow):
                 tab.original_content = content
                 self.update_tab_title(index)
                 self.update_title()
-                # Add to recent files
                 self.add_recent_file(file_path)
                 return True
             except Exception as e:
@@ -2456,7 +2983,6 @@ class MyNotepad(QMainWindow):
             return
 
         editor = tab.editor
-
         current_len = editor.document().characterCount() - 1
         original_len = len(tab.original_content)
 
@@ -2488,6 +3014,81 @@ class MyNotepad(QMainWindow):
                     self.setWindowTitle(base_title)
         else:
             self.setWindowTitle(base_title)
+
+    # ============ v6.0: NOTIFICATION ============
+    def show_toast(self, message, duration=5000, kind='info'):
+        """
+        Show notifications.
+
+        - Windows: use Win32 Balloon Tip (universal XP --> 11)
+          On Windows 10 or 11, Windows auto-convert to modern toast.
+        - Other OSes: fallback customed in-app toast.
+
+        Args:
+            message: Notifying context
+            duration: Showing duration (ms)
+            kind: 'info' | 'success' | 'warning' | 'error'
+        """
+        balloon_kind = kind if kind in ('info', 'warning', 'error') else 'info'
+
+        if sys.platform == 'win32':
+            timeout_sec = max(5, min(30, duration // 1000))
+            ok = show_balloon_tip(
+                title=APP_DISPLAY_NAME,
+                message=message,
+                timeout=timeout_sec,
+                kind=balloon_kind,
+            )
+            if ok:
+                return
+
+        # Fallback: in-app customed toasts
+        self._show_inapp_toast(message, duration, kind)
+
+    def _show_inapp_toast(self, message, duration=5000, kind='info'):
+        """Customed toasts (fallback) - child widget"""
+        if self._current_toast is not None:
+            try:
+                self._current_toast.timer.stop()
+                self._current_toast.fade_anim.stop()
+                self._current_toast.close()
+                self._current_toast.deleteLater()
+            except RuntimeError:
+                pass
+            self._current_toast = None
+
+        toast = WindowsToast(
+            self, message,
+            duration=duration,
+            dark_mode=self.dark_mode,
+            kind=kind
+        )
+
+        self._current_toast = toast
+        self._position_toast(toast)
+
+        toast.show()
+        toast.raise_()
+
+    def _position_toast(self, toast):
+        """Put toasts at right-below corner of window"""
+        margin = 0
+        status_bar_height = self.status_bar.height() if self.status_bar.isVisible() else 0
+
+        x = self.width() - toast.width() - margin
+        y = self.height() - toast.height() - margin - status_bar_height
+
+        toast.move(int(x), int(y))
+
+    def resizeEvent(self, event):
+        """Update toast's location when the window is resized (fallback mode)"""
+        super().resizeEvent(event)
+        if self._current_toast is not None:
+            try:
+                if self._current_toast.isVisible():
+                    self._position_toast(self._current_toast)
+            except RuntimeError:
+                self._current_toast = None
 
     def update_cursor_position(self):
         editor = self.current_editor()
@@ -2621,11 +3222,9 @@ class MyNotepad(QMainWindow):
 
         self.update_status_bar_style()
 
-    # ============ MENU BAR ============
     def create_menu_bar(self):
         menu_bar = self.menuBar()
 
-        # FILE
         file_menu = menu_bar.addMenu("File")
 
         new_action = QAction("New", self)
@@ -2643,7 +3242,6 @@ class MyNotepad(QMainWindow):
         open_action.triggered.connect(self.open_file)
         file_menu.addAction(open_action)
 
-        # v6.0: Recent Files submenu
         self.recent_menu = file_menu.addMenu("Open Recent")
         self.recent_menu.setEnabled(False)
         self.rebuild_recent_menu()
@@ -2659,6 +3257,16 @@ class MyNotepad(QMainWindow):
         save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self.save_as_file)
         file_menu.addAction(save_as_action)
+
+        save_all_action = QAction("Save All", self)
+        save_all_action.setShortcut("Ctrl+Alt+S")
+        save_all_action.triggered.connect(self.save_all_tabs)
+        file_menu.addAction(save_all_action)
+
+        reload_all_action = QAction("Reload All Tabs", self)
+        reload_all_action.setShortcut("Ctrl+Alt+R")
+        reload_all_action.triggered.connect(self.reload_all_tabs)
+        file_menu.addAction(reload_all_action)
 
         file_menu.addSeparator()
 
@@ -2683,7 +3291,6 @@ class MyNotepad(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-        # EDIT
         edit_menu = menu_bar.addMenu("Edit")
 
         undo_action = QAction("Undo", self)
@@ -2756,7 +3363,6 @@ class MyNotepad(QMainWindow):
         trim_action.triggered.connect(lambda: self.current_editor().trim_trailing_spaces() if self.current_editor() else None)
         edit_menu.addAction(trim_action)
 
-        # TAB
         tab_menu = menu_bar.addMenu("Tab")
 
         next_tab_action = QAction("Next Tab", self)
@@ -2769,7 +3375,6 @@ class MyNotepad(QMainWindow):
         prev_tab_action.triggered.connect(self.prev_tab)
         tab_menu.addAction(prev_tab_action)
 
-        # FORMAT
         format_menu = menu_bar.addMenu("Format")
 
         word_wrap_action = QAction("Word Wrap", self)
@@ -2778,7 +3383,18 @@ class MyNotepad(QMainWindow):
         word_wrap_action.triggered.connect(self.toggle_word_wrap)
         format_menu.addAction(word_wrap_action)
 
-        # VIEW
+        format_menu.addSeparator()
+
+        convert_menu = format_menu.addMenu("Convert Indentation")
+
+        tabs_to_spaces_action = QAction("Tabs to Spaces", self)
+        tabs_to_spaces_action.triggered.connect(self.convert_tabs_to_spaces)
+        convert_menu.addAction(tabs_to_spaces_action)
+
+        spaces_to_tabs_action = QAction("Spaces to Tabs", self)
+        spaces_to_tabs_action.triggered.connect(self.convert_spaces_to_tabs)
+        convert_menu.addAction(spaces_to_tabs_action)
+
         view_menu = menu_bar.addMenu("View")
 
         status_bar_action = QAction("Status Bar", self)
@@ -2794,7 +3410,6 @@ class MyNotepad(QMainWindow):
 
         view_menu.addSeparator()
 
-        # v6.0: Bookmarks submenu
         bookmarks_menu = view_menu.addMenu("Bookmarks")
 
         toggle_bm_action = QAction("Toggle Bookmark", self)
@@ -2825,13 +3440,11 @@ class MyNotepad(QMainWindow):
         clear_bm_action.triggered.connect(self.clear_all_bookmarks)
         bookmarks_menu.addAction(clear_bm_action)
 
-        # SETTINGS
         settings_action = QAction("Settings", self)
         settings_action.setShortcut("Ctrl+,")
         settings_action.triggered.connect(self.show_settings)
         menu_bar.addAction(settings_action)
 
-        # HELP
         help_menu = menu_bar.addMenu("Help")
 
         register_action = QAction("Register 'Open with' Menu", self)
@@ -2844,11 +3457,20 @@ class MyNotepad(QMainWindow):
 
         help_menu.addSeparator()
 
+        register_aumid_action = QAction("Register App Identity (Toast)", self)
+        register_aumid_action.triggered.connect(self.manual_register_aumid)
+        help_menu.addAction(register_aumid_action)
+
+        unregister_aumid_action = QAction("Unregister App Identity", self)
+        unregister_aumid_action.triggered.connect(self.manual_unregister_aumid)
+        help_menu.addAction(unregister_aumid_action)
+
+        help_menu.addSeparator()
+
         about_action = QAction("About coding-pudding", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
 
-    # ============ BOOKMARK ACTIONS (v6.0) ============
     def toggle_bookmark(self):
         editor = self.current_editor()
         if editor:
@@ -2900,7 +3522,7 @@ class MyNotepad(QMainWindow):
     def manual_register(self):
         if not getattr(sys, 'frozen', False):
             QMessageBox.information(self, "Info",
-                "This feature only works when running as .exe\n(not when running as .py)")
+                "This feature only works when running as packaged file\n(not when running by source code)")
             return
         exe_path = sys.executable
         if register_context_menu(exe_path):
@@ -2916,12 +3538,33 @@ class MyNotepad(QMainWindow):
         else:
             QMessageBox.critical(self, "Error", "Failed to unregister context menu.")
 
+    def manual_register_aumid(self):
+        if sys.platform != 'win32':
+            QMessageBox.information(self, "Info", "Only Windows OS is supported.")
+            return
+        if register_aumid():
+            QMessageBox.information(
+                self, "Success",
+                f"Registered App Identity:\n{AUMID}\n\n"
+                "Toast notifications will be shown with the name 'coding-pudding' and the icon icon.ico."
+            )
+        else:
+            QMessageBox.critical(self, "Error", "Unable to register.")
+
+    def manual_unregister_aumid(self):
+        if sys.platform != 'win32':
+            return
+        if unregister_aumid():
+            QMessageBox.information(self, "Success", "Removed App Identity.")
+        else:
+            QMessageBox.critical(self, "Error", "Unable to remove App Identity")
+
     def show_about(self):
         QMessageBox.about(self, "About coding-pudding",
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
             "<p><b>Version:</b> 6.0</p>"
-            "<p><b>License:</b> GPL v3</p>")
+            "<p><b>License:</b> GPL v3.0</p>")
 
     def toggle_dark_mode(self, checked):
         self.dark_mode = checked
@@ -3025,6 +3668,9 @@ class MyNotepad(QMainWindow):
         self.save_session()
         self.save_all_bookmarks()
 
+        # Delete icon balloon from tray
+        shutdown_balloon_system()
+
         for i in range(len(self.tabs) - 1, -1, -1):
             tab = self.tabs[i]
             if tab.is_modified:
@@ -3043,7 +3689,6 @@ class MyNotepad(QMainWindow):
                     return
         event.accept()
 
-    # ============ DRAG & DROP ============
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -3062,18 +3707,14 @@ class MyNotepad(QMainWindow):
             return
 
         event.acceptProposedAction()
-
         errors = []
 
         for url in event.mimeData().urls():
             if not url.isLocalFile():
                 continue
-
             file_path = url.toLocalFile()
-
             if not os.path.isfile(file_path):
                 continue
-
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
@@ -3087,7 +3728,7 @@ class MyNotepad(QMainWindow):
         if errors:
             QMessageBox.warning(
                 self, "Cannot Open Files",
-                "coding-pudding is a text editor and can only open text files (UTF-8).\n\n"
+                "coding-pudding can only open text files (UTF-8).\n\n"
                 "The following files are not supported:\n\n" + "\n".join(errors)
             )
 
@@ -3176,10 +3817,7 @@ class FindDialog(QDialog):
                 self.text_area.setTextCursor(new_cursor)
             else:
                 if getattr(self, 'show_not_found', True):
-                    QMessageBox.information(
-                        self, "Find",
-                        f'Cannot find "{text}"'
-                    )
+                    QMessageBox.information(self, "Find", f'Cannot find "{text}"')
                 self.show_not_found = False
 
 
@@ -3275,27 +3913,20 @@ class ReplaceDialog(QDialog):
                 self.text_area.setTextCursor(new_cursor)
             else:
                 if getattr(self, 'show_not_found', True):
-                    QMessageBox.information(
-                        self, "Replace",
-                        f'Cannot find "{text}"'
-                    )
+                    QMessageBox.information(self, "Replace", f'Cannot find "{text}"')
                 self.show_not_found = False
 
     def replace(self):
         text = self.find_input.text()
         if not text:
             return
-
         cursor = self.text_area.textCursor()
-
         if not cursor.hasSelection():
             self.find_next()
             return
-
         if cursor.selectedText() != text:
             self.find_next()
             return
-
         cursor.insertText(self.replace_input.text())
         self.find_next()
 
@@ -3304,18 +3935,15 @@ class ReplaceDialog(QDialog):
         replace_text = self.replace_input.text()
         if not text:
             return
-
         count = 0
         cursor = self.text_area.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         self.text_area.setTextCursor(cursor)
-
         flags = QTextDocument.FindFlag(0)
         if self.case_check.isChecked():
             flags |= QTextDocument.FindFlag.FindCaseSensitively
         if self.word_check.isChecked():
             flags |= QTextDocument.FindFlag.FindWholeWords
-
         while True:
             new_cursor = self.text_area.document().find(text, cursor, flags)
             if new_cursor.isNull():
@@ -3324,17 +3952,10 @@ class ReplaceDialog(QDialog):
             cursor = self.text_area.textCursor()
             cursor.insertText(replace_text)
             count += 1
-
         if count > 0:
-            QMessageBox.information(
-                self, "Replace All",
-                f"Replaced {count} occurrence(s)"
-            )
+            QMessageBox.information(self, "Replace All", f"Replaced {count} occurrence(s)")
         else:
-            QMessageBox.information(
-                self, "Replace All",
-                f'Cannot find "{text}"'
-            )
+            QMessageBox.information(self, "Replace All", f'Cannot find "{text}"')
 
 
 class GotoDialog(QDialog):
@@ -3368,18 +3989,12 @@ class GotoDialog(QDialog):
         try:
             line_num = int(self.line_input.text())
             if line_num < 1:
-                QMessageBox.warning(self, "Go To", "Line number must be >= 1")
+                QMessageBox.warning(self, "Go To", "Line number must be larger than/equal to 1")
                 return
-
             total_lines = self.text_area.document().blockCount()
-
             if line_num > total_lines:
-                QMessageBox.warning(
-                    self, "Go To",
-                    f"Line number too large\nTotal lines: {total_lines}"
-                )
+                QMessageBox.warning(self, "Go To", f"Line number too large\nTotal lines: {total_lines}")
                 return
-
             self.text_area._goto_line(line_num)
             self.close()
         except ValueError:
@@ -3393,9 +4008,10 @@ class GotoDialog(QDialog):
 if __name__ == "__main__":
     if sys.platform == "win32":
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "coding.pudding.app.1"
-        )
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(AUMID)
+        # Đăng ký AUMID vào registry (để Windows hiển thị đúng tên + icon)
+        if not is_aumid_registered():
+            register_aumid()
 
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
