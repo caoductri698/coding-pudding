@@ -22,10 +22,13 @@
   <img src="screenshots/settings.PNG" width="45%" />
 </p>
 
-
 <p align="center">
   <img src="screenshots/bookmarks.PNG" width="45%" />
   <img src="screenshots/line_bookmarks.PNG" width="45%" />
+</p>
+
+<p align="center">
+  <img src="screenshots/notification.PNG" width="45%" />
 </p>
 
 ---
