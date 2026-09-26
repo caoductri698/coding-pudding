@@ -1701,7 +1701,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent_notepad)
         self.parent_notepad = parent_notepad
         self.setWindowTitle("Settings")
-        self.setFixedSize(500, 520)
+        self.setFixedSize(500, 650)
         self.setModal(True)
 
         layout = QVBoxLayout()
@@ -1825,6 +1825,38 @@ class SettingsDialog(QDialog):
         behavior_group.setLayout(behavior_layout)
         layout.addWidget(behavior_group)
 
+        # v7.0: Auto Save group
+        autosave_group = QGroupBox("Auto Save")
+        autosave_layout = QVBoxLayout()
+
+        self.autosave_check = QCheckBox("Enable auto save")
+        self.autosave_check.setChecked(parent_notepad.auto_save_enabled)
+        autosave_layout.addWidget(self.autosave_check)
+
+        interval_row = QHBoxLayout()
+        interval_row.addWidget(QLabel("Save every:"))
+        self.autosave_interval_spin = QSpinBox()
+        self.autosave_interval_spin.setRange(5, 600)
+        self.autosave_interval_spin.setSuffix(" seconds")
+        self.autosave_interval_spin.setValue(parent_notepad.auto_save_interval)
+        self.autosave_interval_spin.setEnabled(parent_notepad.auto_save_enabled)
+        interval_row.addWidget(self.autosave_interval_spin)
+        interval_row.addStretch()
+        autosave_layout.addLayout(interval_row)
+
+        self.autosave_focus_check = QCheckBox("Save when switching tab / losing focus")
+        self.autosave_focus_check.setChecked(parent_notepad.auto_save_on_focus_lost)
+        autosave_layout.addWidget(self.autosave_focus_check)
+
+        autosave_hint = QLabel(
+            "Only files with a path are auto-saved. Unsaved new files are skipped."
+        )
+        autosave_hint.setStyleSheet("color: gray; font-size: 9pt; font-style: italic;")
+        autosave_layout.addWidget(autosave_hint)
+
+        autosave_group.setLayout(autosave_layout)
+        layout.addWidget(autosave_group)
+
         layout.addStretch()
 
         button_row = QHBoxLayout()
@@ -1860,6 +1892,12 @@ class SettingsDialog(QDialog):
         self.linenum_check.toggled.connect(self._mark_dirty)
         self.trim_check.toggled.connect(self._mark_dirty)
         self.restore_tabs_check.toggled.connect(self._mark_dirty)
+
+        # v7.0: Auto save connections
+        self.autosave_check.toggled.connect(self._mark_dirty)
+        self.autosave_interval_spin.valueChanged.connect(self._mark_dirty)
+        self.autosave_focus_check.toggled.connect(self._mark_dirty)
+        self.autosave_check.toggled.connect(self.autosave_interval_spin.setEnabled)
 
         self.update_preview()
 
@@ -1901,6 +1939,12 @@ class SettingsDialog(QDialog):
         self.linenum_check.setChecked(True)
         self.trim_check.setChecked(False)
         self.restore_tabs_check.setChecked(True)
+
+        # v7.0: Auto save defaults
+        self.autosave_check.setChecked(False)
+        self.autosave_interval_spin.setValue(30)
+        self.autosave_focus_check.setChecked(True)
+
         self.update_preview()
 
         self._suppress_dirty = False
@@ -1919,6 +1963,12 @@ class SettingsDialog(QDialog):
         self.parent_notepad.show_line_numbers = self.linenum_check.isChecked()
         self.parent_notepad.trim_on_save = self.trim_check.isChecked()
         self.parent_notepad.restore_tabs = self.restore_tabs_check.isChecked()
+
+        # v7.0: Auto save
+        self.parent_notepad.auto_save_enabled = self.autosave_check.isChecked()
+        self.parent_notepad.auto_save_interval = self.autosave_interval_spin.value()
+        self.parent_notepad.auto_save_on_focus_lost = self.autosave_focus_check.isChecked()
+        self.parent_notepad._apply_auto_save_settings()
 
         self.parent_notepad.indent_size = self.tab_size_combo.currentData()
 
@@ -1994,6 +2044,12 @@ class MyNotepad(QMainWindow):
         self.restore_tabs = True
 
         self.recent_files = []
+        self.pinned_files = []          # v7.0: pinned/favorite files
+
+        # v7.0: Auto save
+        self.auto_save_enabled = False
+        self.auto_save_interval = 15    # giây
+        self.auto_save_on_focus_lost = True
 
         self.tabs = []
 
@@ -2018,6 +2074,15 @@ class MyNotepad(QMainWindow):
 
         self.apply_theme()
         self.load_settings()
+
+        # v7.0: Auto save timers
+        self.auto_save_timer = QTimer()
+        self.auto_save_timer.timeout.connect(self._auto_save_tick)
+
+        self.auto_save_debounce = QTimer()
+        self.auto_save_debounce.setSingleShot(True)
+        self.auto_save_debounce.setInterval(2000)
+        self.auto_save_debounce.timeout.connect(self._auto_save_tick)
 
         if not self.restore_session():
             self.add_new_tab()
@@ -2193,6 +2258,12 @@ class MyNotepad(QMainWindow):
     def add_recent_file(self, file_path):
         if not file_path:
             return
+
+        # v7.0: Pinned file --> DO NOT add to Recent
+        if file_path in self.pinned_files:
+            self.rebuild_recent_menu()
+            return
+
         if file_path in self.recent_files:
             self.recent_files.remove(file_path)
         self.recent_files.insert(0, file_path)
@@ -2207,18 +2278,50 @@ class MyNotepad(QMainWindow):
         settings.remove("recent_files")
         self.rebuild_recent_menu()
 
+    # ============ v7.0: PIN/UNPIN ============
+    def pin_file(self, file_path):
+        if not file_path or file_path in self.pinned_files:
+            return
+        self.pinned_files.append(file_path)
+        if file_path in self.recent_files:
+            self.recent_files.remove(file_path)
+
+        settings = QSettings("coding-pudding", "coding-pudding")
+        settings.setValue("pinned_files", self.pinned_files)
+        settings.setValue("recent_files", self.recent_files)
+        self.rebuild_recent_menu()
+        self.show_toast(f"Pinned: {os.path.basename(file_path)}", 3000, kind='success')
+
+    def unpin_file(self, file_path):
+        if file_path not in self.pinned_files:
+            return
+        self.pinned_files.remove(file_path)
+        self.recent_files.insert(0, file_path)
+        self.recent_files = self.recent_files[:10]
+
+        settings = QSettings("coding-pudding", "coding-pudding")
+        settings.setValue("pinned_files", self.pinned_files)
+        settings.setValue("recent_files", self.recent_files)
+        self.rebuild_recent_menu()
+        self.show_toast(f"Unpinned: {os.path.basename(file_path)}", 3000, kind='info')
+
+    def is_pinned(self, file_path):
+        return file_path in self.pinned_files
+
     def rebuild_recent_menu(self):
         if not hasattr(self, 'recent_menu'):
             return
         self.recent_menu.clear()
 
-        existing = [p for p in self.recent_files if os.path.isfile(p)]
-        if len(existing) != len(self.recent_files):
-            self.recent_files = existing
-            settings = QSettings("coding-pudding", "coding-pudding")
-            settings.setValue("recent_files", self.recent_files)
+        # Apply filter on unavailable files
+        self.pinned_files = [p for p in self.pinned_files if os.path.isfile(p)]
+        self.recent_files = [p for p in self.recent_files if os.path.isfile(p)]
 
-        if not existing:
+        settings = QSettings("coding-pudding", "coding-pudding")
+        settings.setValue("pinned_files", self.pinned_files)
+        settings.setValue("recent_files", self.recent_files)
+
+        if not self.pinned_files and not self.recent_files:
             no_recent = QAction("(No recent files)", self)
             no_recent.setEnabled(False)
             self.recent_menu.addAction(no_recent)
@@ -2227,13 +2330,37 @@ class MyNotepad(QMainWindow):
 
         self.recent_menu.setEnabled(True)
 
-        for i, path in enumerate(existing, 1):
-            basename = os.path.basename(path)
-            action = QAction(f"{i}. {basename}", self)
-            action.setToolTip(path)
-            action.setStatusTip(path)
-            action.triggered.connect(lambda checked=False, p=path: self.open_recent_file(p))
-            self.recent_menu.addAction(action)
+        # --- PINNED SECTION ---
+        if self.pinned_files:
+            header = QAction("Pinned", self)
+            header.setEnabled(False)
+            self.recent_menu.addAction(header)
+
+            for path in self.pinned_files:
+                basename = os.path.basename(path)
+                action = QAction(f"★ {basename}", self)
+                action.setToolTip(path)
+                action.setStatusTip(path)
+                action.triggered.connect(lambda checked=False, p=path: self.open_recent_file(p))
+                self.recent_menu.addAction(action)
+
+            if self.recent_files:
+                self.recent_menu.addSeparator()
+
+        # --- RECENT SECTION ---
+        if self.recent_files:
+            if self.pinned_files:
+                header = QAction("Recent", self)
+                header.setEnabled(False)
+                self.recent_menu.addAction(header)
+
+            for i, path in enumerate(self.recent_files, 1):
+                basename = os.path.basename(path)
+                action = QAction(f"{i}. {basename}", self)
+                action.setToolTip(path)
+                action.setStatusTip(path)
+                action.triggered.connect(lambda checked=False, p=path: self.open_recent_file(p))
+                self.recent_menu.addAction(action)
 
         self.recent_menu.addSeparator()
 
@@ -2299,6 +2426,17 @@ class MyNotepad(QMainWindow):
             recent = [recent]
         self.recent_files = recent if isinstance(recent, list) else []
 
+        # v7.0: Pinned files
+        pinned = settings.value("pinned_files", [])
+        if isinstance(pinned, str):
+            pinned = [pinned]
+        self.pinned_files = pinned if isinstance(pinned, list) else []
+
+        # v7.0: Auto save
+        self.auto_save_enabled = settings.value("auto_save_enabled", False, type=bool)
+        self.auto_save_interval = settings.value("auto_save_interval", 30, type=int)
+        self.auto_save_on_focus_lost = settings.value("auto_save_on_focus_lost", True, type=bool)
+
     def save_settings(self):
         settings = QSettings("coding-pudding", "coding-pudding")
         settings.setValue("geometry", self.saveGeometry())
@@ -2312,6 +2450,12 @@ class MyNotepad(QMainWindow):
         settings.setValue("indent_size", self.indent_size)
         settings.setValue("restore_tabs", self.restore_tabs)
         settings.setValue("recent_files", self.recent_files)
+
+        # v7.0
+        settings.setValue("pinned_files", self.pinned_files)
+        settings.setValue("auto_save_enabled", self.auto_save_enabled)
+        settings.setValue("auto_save_interval", self.auto_save_interval)
+        settings.setValue("auto_save_on_focus_lost", self.auto_save_on_focus_lost)
 
     def current_editor(self):
         return self.tab_widget.currentWidget()
@@ -2375,6 +2519,10 @@ class MyNotepad(QMainWindow):
         return tab
 
     def on_tab_changed(self, index):
+        # v7.0: Auto-save when switching tabs
+        if self.auto_save_enabled and self.auto_save_on_focus_lost:
+            self._auto_save_tick()
+
         if 0 <= index < len(self.tabs):
             self.update_cursor_position()
             self.update_title()
@@ -2471,6 +2619,52 @@ class MyNotepad(QMainWindow):
         else:
             self.status_bar.showMessage(f"Saved {saved} files", 2000)
             self.show_toast(f"Saved {saved} files", kind='success')
+
+    # ============ v7.0: AUTO SAVE ============
+    def _apply_auto_save_settings(self):
+        """Turn on/off auto-save timer"""
+        if self.auto_save_enabled:
+            self.auto_save_timer.start(self.auto_save_interval * 1000)
+        else:
+            self.auto_save_timer.stop()
+            self.auto_save_debounce.stop()
+
+    def _auto_save_tick(self):
+        """Save all tabs that have path and is being modified"""
+        saved = 0
+        for i, tab in enumerate(self.tabs):
+            if not tab.is_modified or not tab.file_path:
+                continue
+            try:
+                content = tab.editor.toPlainText()
+                with open(tab.file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                tab.is_modified = False
+                tab.original_content = content
+                self.update_tab_title(i)
+                self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
+                saved += 1
+            except Exception:
+                pass
+
+        if saved > 0:
+            self.update_title()
+            self.status_bar.showMessage(f"Auto-saved {saved} file(s)", 1500)
+            self.show_toast(f"Auto-saved {saved} file(s)", 3000, kind='success')
+
+    def _on_editor_text_changed(self):
+        """Reset debounce timer once per press"""
+        if self.auto_save_enabled:
+            self.auto_save_debounce.start()
+
+    def changeEvent(self, event):
+        """Auto-save when the window is out of focus mode"""
+        if event.type() == event.Type.ActivationChange:
+            if (not self.isActiveWindow()
+                    and self.auto_save_enabled
+                    and self.auto_save_on_focus_lost):
+                self._auto_save_tick()
+        super().changeEvent(event)
 
     def reload_all_tabs(self):
         tabs_with_path = [t for t in self.tabs if t.file_path]
@@ -2748,6 +2942,16 @@ class MyNotepad(QMainWindow):
         reload_action.setEnabled(has_file)
         reload_action.triggered.connect(lambda: self._reload_tab_from_disk(index))
 
+        # v7.0: Pin/Unpin
+        if has_file:
+            menu.addSeparator()
+            if self.is_pinned(tab.file_path):
+                unpin_action = menu.addAction("Unpin from Recent")
+                unpin_action.triggered.connect(lambda: self.unpin_file(tab.file_path))
+            else:
+                pin_action = menu.addAction("Pin to Recent")
+                pin_action.triggered.connect(lambda: self.pin_file(tab.file_path))
+
         menu.exec(global_pos)
 
     def _close_others_for(self, index):
@@ -2996,6 +3200,9 @@ class MyNotepad(QMainWindow):
             tab.is_modified = is_modified
             self.update_tab_title()
             self.update_title()
+
+        # v7.0: Reset auto-save debounce
+        self._on_editor_text_changed()
 
     def update_title(self):
         base_title = "coding-pudding.exe"
@@ -3563,7 +3770,7 @@ class MyNotepad(QMainWindow):
         QMessageBox.about(self, "About coding-pudding",
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
-            "<p><b>Version:</b> 6.0</p>"
+            "<p><b>Version:</b> 7.0</p>"
             "<p><b>License:</b> GPL v3.0</p>")
 
     def toggle_dark_mode(self, checked):
