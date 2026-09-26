@@ -59,6 +59,8 @@
 - **Desktop notifications** — Toast notifications appear at the bottom-right of the screen with the app icon and name. Works on Windows 7/8/10/11. Falls back to `in-app toasts` on non-Windows systems.
 - **Tab elide** — Long file names are elided in the middle; tabs don't stretch to full width. Hover to see the full path.
 - **Convert indentation** — Convert leading whitespace between tabs and spaces with `Format` --> `Convert Indentation`. Useful for normalizing code style across files.
+- **Auto save** — Automatically save modified files at a configurable interval (default: 15 seconds). Also saves when switching tabs or losing window focus. Enable in `Settings` --> `Auto Save`.
+- **Pin favorite recent files** — Pin important files to the top of the `Open Recent` menu. Right-click a tab --> `Pin to Recent`.
 
 ---
 
