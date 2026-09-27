@@ -178,12 +178,14 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 This editor supports two style of indentation:
 - **Spaces** (default: **FOUR** spaces) - recommended by `PEP 8`
 - **Tabs** (`\t`) - smaller file size, width is configurable
+
 To convert indentation:
 1. Open a file (`Ctrl + O`)
 2. Go to `Format` --> `Convert Indentation`
 3. Choose `ONE` style:
 - **Tabs to Spaces** - replace all leading tabs to spaces
-- **Spaces to Tabs** - replace all leading spaces to tabs \\
+- **Spaces to Tabs** - replace all leading spaces to tabs
+
 The conversion only affects **leading whitespace** (indentation), not `spaces`/`tabs` **IN THE MIDDLE** of a line.
 
 **Example:**
@@ -213,6 +215,7 @@ You can **PIN**/**UNPIN** you favorite files by doing these steps:
 2. **RIGHT-CLICK** on the tab --> **Pin to Recent**
 3. The file is now appeared in a **PINNED** section at the top of `File` --> `Open Recent`
 4. To **UNPIN**, you can **RIGHT-CLICK** on the tab --> `Unpin from Recent`
+
 Pinned files will not be duplicated in the `Recent` list
 
 ### Close tab with middle-click
@@ -228,7 +231,9 @@ The app shows **TOAST NOTIFICATION** at the bottom-right of the screen for event
 - Auto-saving
 - Pinning / unpinning recent files
 - Copying file path / file name
+
 On Windows 10/11, the system automatically converts the balloon tip into a modern toast notification.
+
 App identity registration (for the correct app name + icon on the toast):
 - Register: Help --> Register App Identity (Toast).
 - Unregister: Help --> Unregister App Identity.
