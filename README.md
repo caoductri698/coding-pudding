@@ -29,7 +29,6 @@
 
 <p align="center">
   <img src="screenshots/notification.PNG" width="45%" />
-  <img src="screenshots/version.PNG" width="45%" />
 </p>
 
 ---
@@ -57,7 +56,7 @@
 - **Indentation size setting** - Change indentation **SIZE** in the `Settings` dialog.
 - **Bookmarks** - **MARK** important parts of your project.
 - **Open Recent files** - `File` --> `Open Recent` to show the **TEN** most recently opened files.
-- **Desktop notifications** - **TOAST NOTIFCATIONS** appear at the bottom-right of the screen with the app icon and name. Falls back to **IN-APP** toast when meeting errors.
+- **Desktop notifications** - **TOAST NOTIFiCATIONS** appear at the bottom-right of the screen with the app icon and name. Falls back to **IN-APP** toast when meeting errors.
 - **Tab elide** - Long file names are elided in the middle; no **TAB STRETCHING**. Hover to see the full path.
 - **Convert indentation** - Convert leading whitespace between **TABS** and **SPACES** with `Format` --> `Convert Indentation`.
 - **Auto save** - Automatically save **MODIFIED** files at a configurable interval (default: 15 seconds). Also saves when switching tabs or losing window focus. Enable in `Settings` --> `Auto Save`.
