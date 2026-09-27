@@ -29,6 +29,7 @@
 
 <p align="center">
   <img src="screenshots/notification.PNG" width="45%" />
+  <img src="screenshots/version.PNG" width="45%" />
 </p>
 
 ---
