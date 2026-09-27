@@ -220,7 +220,7 @@ Pinned files will not be duplicated in the `Recent` list
 
 ### Close tab with middle-click
 - **MIDDLE-CLICK** on a tab --> close the tab.
-- **MIDDLE-CLICK** on the X button --> closes the tab.
+- **MIDDLE-CLICK** on the `X` button --> closes the tab.
 - **MIDDLE-CLICK** + drag to another tab --> no tab is closed.
 
 ### Desktop notifications
