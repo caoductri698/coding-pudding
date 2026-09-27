@@ -56,12 +56,12 @@
 - **Indentation size setting** - Change indentation **SIZE** in the `Settings` dialog.
 - **Bookmarks** - **MARK** important parts of your project.
 - **Open Recent files** - `File` --> `Open Recent` to show the **TEN** most recently opened files.
-- **Desktop notifications** - **TOAST NOTIFiCATIONS** appear at the bottom-right of the screen with the app icon and name. Falls back to **IN-APP** toast when meeting errors.
+- **Desktop notifications** - **TOAST NOTIFICATIONS** appear at the bottom-right of the screen with the app icon and name. Falls back to **IN-APP** toast when meeting errors.
 - **Tab elide** - Long file names are elided in the middle; no **TAB STRETCHING**. Hover to see the full path.
 - **Convert indentation** - Convert leading whitespace between **TABS** and **SPACES** with `Format` --> `Convert Indentation`.
 - **Auto save** - Automatically save **MODIFIED** files at a configurable interval (default: 15 seconds). Also saves when switching tabs or losing window focus. Enable in `Settings` --> `Auto Save`.
 - **Pin/Unpin favorite recent files** - **PIN**/**UNPIN** important files to the top of the `Open Recent` menu.
-- **Current line highlight** - The line containing the cursor is **HIGHTLIGHTED** with a subtle background color.
+- **Current line highlight** - The line containing the cursor is **HIGHLIGHTED** with a subtle background color.
 - **Middle-click close tab** - **MIDDLE-CLICK** on any tab to close it. Press and release on the same tab to close; press on one tab and release on another to cancel.
 
 ---
