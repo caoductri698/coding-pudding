@@ -35,32 +35,34 @@
 
 ## Features
 
-- **Tabs** — Open multiple files in one window.
-- **Dark mode** — Protect your eyes during long coding sessions.
-- **Automatic indentation** — Automatically indent after `:` (no more typing 4 spaces manually).
-- **Bracket matching** — Automatically close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
-- **Smart bracket deletion** — Delete matching bracket pairs intelligently.
-- **Tear-off tabs** — Drag a tab out to create a new window with that file.
-- **Auto-scroll** — Middle-click to create an anchor and scroll automatically.
-- **Toggle comment** — `Ctrl + /` to comment/uncomment selected lines.
-- **Line numbers** — Easily locate your code by line number.
-- **Find / Replace / Go To** — Full search, replace, and navigation support.
-- **Auto-saving settings** — Remembers your theme (dark/light) and window size.
-- **"Open with coding-pudding"** — Right-click any file to open it directly.
-- **Word counting** — Press `Ctrl + Shift + W` to open the `Word Count` dialog.
-- **Horizontal scrolling** — Press `Shift + Scroll` to do horizontal scroll.
-- **Settings dialog** — Press `Ctrl + ,` to configure font, font size, theme, and editor behavior.
-- **Remember opened tabs** — The editor remembers tabs from the last coding session.
-- **Tab context menu** — Right-click a tab to open a context menu.
-- **Close all tabs** — Press `Ctrl + Alt + W` to close all tabs (with unsaved-changes warning).
-- **Indentation size setting** — Change indentation size in the `Settings` dialog.
-- **Bookmarks** — Mark important parts of your project.
-- **Open Recent files** — `File` → `Open Recent` to show the `TEN` most recently opened files.
-- **Desktop notifications** — Toast notifications appear at the bottom-right of the screen with the app icon and name. Works on Windows 7/8/10/11. Falls back to `in-app toasts` on non-Windows systems.
-- **Tab elide** — Long file names are elided in the middle; tabs don't stretch to full width. Hover to see the full path.
-- **Convert indentation** — Convert leading whitespace between tabs and spaces with `Format` --> `Convert Indentation`. Useful for normalizing code style across files.
-- **Auto save** — Automatically save modified files at a configurable interval (default: 15 seconds). Also saves when switching tabs or losing window focus. Enable in `Settings` --> `Auto save`.
-- **Pin favorite recent files** — Pin important files to the top of the `Open Recent` menu. Right-click a tab --> `Pin to Recent`.
+- **Tabs** - Open multiple files in one window.
+- **Dark mode** - Protect your eyes during long coding sessions.
+- **Automatic indentation** - Automatically indent after `:` (no more typing 4 spaces manually).
+- **Bracket matching** - Automatically close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
+- **Smart bracket deletion** - Delete matching bracket pairs intelligently.
+- **Tear-off tabs** - Drag a tab out to create a new window with that file.
+- **Auto-scroll** - Middle-click to create an anchor and scroll automatically.
+- **Toggle comment** - `Ctrl + /` to comment/uncomment selected lines.
+- **Line numbers** - Easily locate your code by line number.
+- **Find / Replace / Go To** - Full search, replace, and navigation support.
+- **Auto-saving settings** - Remembers your theme (dark/light) and window size.
+- **"Open with coding-pudding"** - Right-click any file to open it directly.
+- **Word counting** - Press `Ctrl + Shift + W` to open the `Word Count` dialog.
+- **Horizontal scrolling** - Press `Shift + Scroll` to do horizontal scroll.
+- **Settings dialog** - Press `Ctrl + ,` to configure font, font size, theme, and editor behavior.
+- **Remember opened tabs** - The editor remembers tabs from the last coding session.
+- **Tab context menu** - Right-click a tab to open a context menu.
+- **Close all tabs** - Press `Ctrl + Alt + W` to close all tabs (with unsaved-changes warning).
+- **Indentation size setting** - Change indentation size in the `Settings` dialog.
+- **Bookmarks** - Mark important parts of your project.
+- **Open Recent files** - `File` --> `Open Recent` to show the 10 most recently opened files.
+- **Desktop notifications** - Toast notifications appear at the bottom-right of the screen with the app icon and name. Works on Windows 7 / 8 / 10 / 11. Falls back to in-app toasts on non-Windows systems.
+- **Tab elide** - Long file names are elided in the middle; tabs don't stretch to full width. Hover to see the full path.
+- **Convert indentation** - Convert leading whitespace between tabs and spaces with `Format` --> `Convert Indentation`.
+- **Auto save** - Automatically save modified files at a configurable interval (default: 15 seconds). Also saves when switching tabs or losing window focus. Enable in `Settings` --> `Auto Save`.
+- **Pin favorite recent files** - Pin important files to the top of the `Open Recent` menu. Right-click a tab --> `Pin to Recent`.
+- **Current line highlight** - The line containing the cursor is highlighted with a subtle background color (theme-aware).
+- **Middle-click close tab** - Middle-click on any tab to close it. Press and release on the same tab to close; press on one tab and release on another to cancel.
 
 ---
 
@@ -171,6 +173,80 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 - **Automatically**: Run the app once --> it registers automatically
 - **Manually**: Help --> Register 'Open with' Menu
 - **Removing**: Help --> Unregister 'Open with' Menu
+
+### Indentation converting
+This editor supports two style of indentation:
+- **Spaces** (default: **FOUR** spaces) - recommended by `PEP 8`
+- **Tabs** (`\t`) - smaller file size, width is configurable
+To convert indentation:
+1. Open a file (`Ctrl + O`)
+2. Go to `Format` --> `Convert Indentation`
+3. Choose `ONE` style:
+- **Tabs to Spaces** - replace all leading tabs to spaces
+- **Spaces to Tabs** - replace all leading spaces to tabs
+The conversion only affects **leading whitespace** (indentation), not `spaces`/`tabs` **IN THE MIDDLE** of a line.
+
+**Example:**
+
+```python
+Before (tabs):              After (tabs --> spaces):
+def hello():                def hello():
+\tprint("hi")                   print("hi")
+\tif True:                       if True:
+\t\tpass                            pass
+```
+
+**Notes:**
+- If there is **NO** leading tabs or **NO** leading spaces, a status message will appear - no changes is made.
+- Indentation size (2/4/8 spaces or tab character) can be configured in `Settings` dialog (`Ctrl + ,`) --> `Indentation size`.
+- Changes mark the file as **MODIFIED**.
+
+### Auto-save
+- The **MODIFIED** file is automatically saved after **N** seconds - interval between auto saves (5 --> 600 seconds, default: 15 seconds).
+- The file will be automatically saved when **switching tabs**/**losing focus**.
+Only files with their path are able to use this feature. Unsaved new files (`Untitled`) are skipped.
+Every time you type, a 2-secs debouncer is reset. Auto save fires 2 seconds after you stop modifying you file.
+
+### Pin/Unpin recent files
+You can **PIN**/**UNPIN** you favorite files by doing these steps:
+1. Open a file (`Ctrl + O`)
+2. **RIGHT-CLICK** on the tab --> **Pin to Recent**
+3. The file is now appeared in a **PINNED** section at the top of `File` --> `Open Recent`
+4. To **UNPIN**, you can **RIGHT-CLICK** on the tab --> `Unpin from Recent`
+Pinned files will not be duplicated in the `Recent` list
+
+### Close tab with middle-click
+- **MIDDLE-CLICK** on a tab --> close the tab.
+- **MIDDLE-CLICK** on the X button --> closes the tab.
+- **MIDDLE-CLICK** + drag to another tab --> no tab is closed.
+
+### Desktop notifications
+The app shows **TOAST NOTIFICATION** at the bottom-right of the screen for events, such as:
+- Saving files
+- Reloading files
+- Converting indentation (tabs <--> spaces)
+- Auto-saving
+- Pinning / unpinning recent files
+- Copying file path / file name
+On Windows 10/11, the system automatically converts the balloon tip into a modern toast notification.
+App identity registration (for the correct app name + icon on the toast):
+- Register: Help --> Register App Identity (Toast).
+- Unregister: Help --> Unregister App Identity.
+
+---
+
+## Troubleshooting
+
+### Toast notification not showing
+If notifications **NO LONGER** appear after running `coding-pudding` multiple times:
+1. Open **Task Manager** - `taskmgr` (`Ctrl + Shift + Esc`).
+2. Find **Windows Explorer**.
+3. Right-click --> `Restart`.
+
+This clears stale tray icon state left behind by crashed sessions.
+
+### Toast shows "`Python`" instead of "`coding-pudding`"
+This only happens when running from source code (python.exe). The official coding-pudding.exe from **Releases** will fix this problem.
 
 ---
 
