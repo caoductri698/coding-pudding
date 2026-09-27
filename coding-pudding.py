@@ -393,7 +393,7 @@ def shutdown_balloon_system():
 # ============================================================
 
 class WindowsToast(QWidget):
-    """Custom notification - fallback when it is not Windows"""
+    """Custom notification - fallback when the OS is not Windows"""
 
     ICONS = {
         'info':    ('ⓘ', '#0078d4'),
@@ -597,10 +597,12 @@ class CodeEditor(QPlainTextEdit):
 
         self.textChanged.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.update_line_number_area)
+        self.cursorPositionChanged.connect(self.highlight_current_line)
         self.blockCountChanged.connect(self.update_line_number_area_width)
 
         self.update_line_number_area_width()
         self.update_line_number_area()
+        self.highlight_current_line()
 
     def update_line_number_area_width(self):
         digits = 1
@@ -634,6 +636,26 @@ class CodeEditor(QPlainTextEdit):
         if self.indent_size == 0:
             return 4
         return self.indent_size
+
+    # ============ v8.0: CURRENT LINE HIGHLIGHT ============
+    def _get_current_line_color(self):
+        """Return highlighting color as theme"""
+        if self.dark_mode:
+            return QColor(58, 58, 58)
+        else:
+            return QColor(224, 224, 224)
+
+    def highlight_current_line(self):
+        """The line with cursor is highlighted"""
+        sel = QTextEdit.ExtraSelection()
+        sel.format.setBackground(self._get_current_line_color())
+        sel.format.setProperty(
+            QTextFormat.Property.FullWidthSelection, True
+        )
+        sel.cursor = self.textCursor()
+        sel.cursor.clearSelection()
+
+        self.setExtraSelections([sel])
 
     def convert_tabs_to_spaces(self):
         indent_size = self.get_indent_width()
@@ -891,6 +913,7 @@ class CodeEditor(QPlainTextEdit):
 
         self.viewport().update()
         self.line_number_area.update()
+        self.highlight_current_line()
 
     def toggle_dark_mode(self, dark_mode):
         self.dark_mode = dark_mode
@@ -1517,14 +1540,59 @@ class CustomTabWidget(QTabWidget):
         self.setMovable(True)
         self.setDocumentMode(True)
 
-        # v6.0: Elide tên file dài, không giãn tab
+        # v7.0: Elide long-name files, no tab stretching
         self.setElideMode(Qt.TextElideMode.ElideMiddle)
         self.tabBar().setExpanding(False)
         self.tabBar().setUsesScrollButtons(True)
 
+        # v8.0: Middle-click to close tab
+        self.tabBar().installEventFilter(self)
+        self._middle_click_tab = -1
+        self._middle_click_pos = None
+
         self.tabCloseRequested.connect(self.on_tab_close_requested)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.on_tab_context_menu)
+
+    # ============ v8.0: MIDDLE-CLICK CLOSE TAB ============
+    def eventFilter(self, obj, event):
+        """
+        Middle-click on tab bar to close the tab:
+        - Press + Release in the SAME tab --> CLOSE
+        - Press on THIS tab, release on THAT tab --> do NOTHING
+        - Press and keep + move --> do NOTHING
+        """
+        if obj == self.tabBar():
+            # --- Middle button PRESS ---
+            if (event.type() == event.Type.MouseButtonPress
+                    and event.button() == Qt.MouseButton.MiddleButton):
+                index = self.tabBar().tabAt(event.pos())
+                if index >= 0:
+                    self._middle_click_tab = index
+                    self._middle_click_pos = event.pos()
+                    return True
+                return False
+
+            # --- Middle button RELEASE ---
+            if (event.type() == event.Type.MouseButtonRelease
+                    and event.button() == Qt.MouseButton.MiddleButton):
+                if self._middle_click_tab >= 0:
+                    # If middle-clicking is released outside the tab --> cancle
+                    if not self.tabBar().rect().contains(event.pos()):
+                        self._middle_click_tab = -1
+                        self._middle_click_pos = None
+                        return True
+
+                    release_index = self.tabBar().tabAt(event.pos())
+                    if release_index == self._middle_click_tab:
+                        self.on_tab_close_requested(self._middle_click_tab)
+
+                    self._middle_click_tab = -1
+                    self._middle_click_pos = None
+                    return True
+                return False
+
+        return super().eventFilter(obj, event)
 
     def on_tab_close_requested(self, index):
         if self.parent_notepad:
@@ -1826,7 +1894,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(behavior_group)
 
         # v7.0: Auto Save group
-        autosave_group = QGroupBox("Auto Save")
+        autosave_group = QGroupBox("Auto save")
         autosave_layout = QVBoxLayout()
 
         self.autosave_check = QCheckBox("Enable auto save")
@@ -3770,7 +3838,7 @@ class MyNotepad(QMainWindow):
         QMessageBox.about(self, "About coding-pudding",
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
-            "<p><b>Version:</b> 7.0</p>"
+            "<p><b>Version:</b> 8.0</p>"
             "<p><b>License:</b> GPL v3.0</p>")
 
     def toggle_dark_mode(self, checked):
