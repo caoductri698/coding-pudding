@@ -35,34 +35,34 @@
 
 ## Features
 
-- **Tabs** - Open multiple files in one window.
-- **Dark mode** - Protect your eyes during long coding sessions.
-- **Automatic indentation** - Automatically indent after `:` (no more typing 4 spaces manually).
-- **Bracket matching** - Automatically close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
-- **Smart bracket deletion** - Delete matching bracket pairs intelligently.
-- **Tear-off tabs** - Drag a tab out to create a new window with that file.
-- **Auto-scroll** - Middle-click to create an anchor and scroll automatically.
-- **Toggle comment** - `Ctrl + /` to comment/uncomment selected lines.
-- **Line numbers** - Easily locate your code by line number.
-- **Find / Replace / Go To** - Full search, replace, and navigation support.
-- **Auto-saving settings** - Remembers your theme (dark/light) and window size.
-- **"Open with coding-pudding"** - Right-click any file to open it directly.
-- **Word counting** - Press `Ctrl + Shift + W` to open the `Word Count` dialog.
-- **Horizontal scrolling** - Press `Shift + Scroll` to do horizontal scroll.
-- **Settings dialog** - Press `Ctrl + ,` to configure font, font size, theme, and editor behavior.
-- **Remember opened tabs** - The editor remembers tabs from the last coding session.
-- **Tab context menu** - Right-click a tab to open a context menu.
-- **Close all tabs** - Press `Ctrl + Alt + W` to close all tabs (with unsaved-changes warning).
-- **Indentation size setting** - Change indentation size in the `Settings` dialog.
-- **Bookmarks** - Mark important parts of your project.
-- **Open Recent files** - `File` --> `Open Recent` to show the 10 most recently opened files.
-- **Desktop notifications** - Toast notifications appear at the bottom-right of the screen with the app icon and name. Works on Windows 7 / 8 / 10 / 11. Falls back to in-app toasts on non-Windows systems.
-- **Tab elide** - Long file names are elided in the middle; tabs don't stretch to full width. Hover to see the full path.
-- **Convert indentation** - Convert leading whitespace between tabs and spaces with `Format` --> `Convert Indentation`.
-- **Auto save** - Automatically save modified files at a configurable interval (default: 15 seconds). Also saves when switching tabs or losing window focus. Enable in `Settings` --> `Auto Save`.
-- **Pin favorite recent files** - Pin important files to the top of the `Open Recent` menu. Right-click a tab --> `Pin to Recent`.
-- **Current line highlight** - The line containing the cursor is highlighted with a subtle background color (theme-aware).
-- **Middle-click close tab** - Middle-click on any tab to close it. Press and release on the same tab to close; press on one tab and release on another to cancel.
+- **Tabs** - Open **MULTIPLE** files in one window.
+- **Dark mode** - Protect your eyes during **LONG** coding sessions.
+- **Automatic indentation** - **AUTOMATICALLY** indent after `:` (no more typing 4 spaces manually).
+- **Bracket matching** - **AUTOMATICALLY** close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
+- **Smart bracket deletion** - Delete **MATCHING BRACKET PAIRS** intelligently.
+- **Tear-off tabs** - **DRAG** a tab out to create a new window with that file.
+- **Auto-scroll** - **MIDDLE-CLICK** to create an **ANCHOR AND SCROLL** automatically.
+- **Toggle comment** - `Ctrl + /` to **COMMENT**/**UNCOMMENT** selected lines.
+- **Line numbers** - Easily locate your code by **LINE NUMBER**.
+- **Find / Replace / Go To** - Full **SEARCH**, **REPLACE**, and **NAVIGATION** support.
+- **Auto-saving settings** - Remembers your **THEME** (dark/light) and **WINDOW SIZE**.
+- **"Open with coding-pudding"** - **RIGHT-CLICK** any file to open it directly.
+- **Word counting** - Press `Ctrl + Shift + W` to open the **`WORD COUNT`** dialog.
+- **Horizontal scrolling** - Press `Shift + Scroll` to do **HORIZONTAL SCROLL**.
+- **Settings dialog** - Press `Ctrl + ,` to **CONFIGURE** font, font size, theme, and editor behavior.
+- **Remember opened tabs** - The editor **REMEMBERS** tabs from the last coding session.
+- **Tab context menu** - Right-click a tab to open a **CONTEXT MENU**.
+- **Close all tabs** - Press `Ctrl + Alt + W` to **CLOSE ALL** tabs (with unsaved-changes warning).
+- **Indentation size setting** - Change indentation **SIZE** in the `Settings` dialog.
+- **Bookmarks** - **MARK** important parts of your project.
+- **Open Recent files** - `File` --> `Open Recent` to show the **TEN** most recently opened files.
+- **Desktop notifications** - **TOAST NOTIFCATIONS** appear at the bottom-right of the screen with the app icon and name. Falls back to **IN-APP** toast when meeting errors.
+- **Tab elide** - Long file names are elided in the middle; no **TAB STRETCHING**. Hover to see the full path.
+- **Convert indentation** - Convert leading whitespace between **TABS** and **SPACES** with `Format` --> `Convert Indentation`.
+- **Auto save** - Automatically save **MODIFIED** files at a configurable interval (default: 15 seconds). Also saves when switching tabs or losing window focus. Enable in `Settings` --> `Auto Save`.
+- **Pin/Unpin favorite recent files** - **PIN**/**UNPIN** important files to the top of the `Open Recent` menu.
+- **Current line highlight** - The line containing the cursor is **HIGHTLIGHTED** with a subtle background color.
+- **Middle-click close tab** - **MIDDLE-CLICK** on any tab to close it. Press and release on the same tab to close; press on one tab and release on another to cancel.
 
 ---
 
