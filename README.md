@@ -183,7 +183,7 @@ To convert indentation:
 2. Go to `Format` --> `Convert Indentation`
 3. Choose `ONE` style:
 - **Tabs to Spaces** - replace all leading tabs to spaces
-- **Spaces to Tabs** - replace all leading spaces to tabs
+- **Spaces to Tabs** - replace all leading spaces to tabs \\
 The conversion only affects **leading whitespace** (indentation), not `spaces`/`tabs` **IN THE MIDDLE** of a line.
 
 **Example:**
