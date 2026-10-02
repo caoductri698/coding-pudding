@@ -5,6 +5,10 @@ import hashlib
 import ctypes
 import ctypes.wintypes as wintypes
 from datetime import datetime
+
+# Suppress Qt font warnings (OpenType support missing for script 13)
+os.environ["QT_LOGGING_RULES"] = "qt.text.font.db=false"
+
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QPlainTextEdit,
                              QMenuBar, QMenu, QFileDialog, QMessageBox,
                              QStatusBar, QLabel, QFontDialog, QColorDialog,
@@ -278,12 +282,10 @@ def _init_balloon_system():
         ]
         shell32.Shell_NotifyIconW.restype = ctypes.c_int
 
-        # Use desktop window - creating a separated window is not required
         hwnd = user32.GetDesktopWindow()
         if not hwnd:
             return False
 
-        # Load icon.ico (16x16)
         hicon = None
         icon_path = resource_path("icon.ico")
         if os.path.isfile(icon_path):
@@ -377,8 +379,6 @@ def shutdown_balloon_system():
         if _balloon_state['hicon']:
             user32.DestroyIcon(_balloon_state['hicon'])
 
-        # DO NOT using DestroyWindow - hwnd is desktop window
-
         _balloon_state['icon_added'] = False
         _balloon_state['hwnd'] = None
         _balloon_state['nid'] = None
@@ -386,7 +386,6 @@ def shutdown_balloon_system():
 
     except Exception:
         pass
-
 
 # ============================================================
 # WINDOWS-STYLE NOTIFICATION (fallback for non-Windows)
@@ -599,6 +598,7 @@ class CodeEditor(QPlainTextEdit):
         self.cursorPositionChanged.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
         self.blockCountChanged.connect(self.update_line_number_area_width)
+        self.updateRequest.connect(self.update_line_number_area_request)
 
         self.update_line_number_area_width()
         self.update_line_number_area()
@@ -1501,7 +1501,6 @@ class CodeEditor(QPlainTextEdit):
                                                   self.line_number_area.width(),
                                                   cr.height()))
 
-
 # ============================================================
 # EDITOR TAB
 # ============================================================
@@ -1512,6 +1511,8 @@ class EditorTab:
         self.file_path = file_path
         self.is_modified = is_modified
         self.original_content = ""
+        self.encoding = "utf-8"        # v9.0: encoding per tab
+        self.line_ending = "lf"        # v9.0: line ending per tab
 
     def get_display_name(self):
         if self.file_path:
@@ -1577,7 +1578,7 @@ class CustomTabWidget(QTabWidget):
             if (event.type() == event.Type.MouseButtonRelease
                     and event.button() == Qt.MouseButton.MiddleButton):
                 if self._middle_click_tab >= 0:
-                    # If middle-clicking is released outside the tab --> cancle
+                    # If middle-clicking is released outside the tab --> cancel
                     if not self.tabBar().rect().contains(event.pos()):
                         self._middle_click_tab = -1
                         self._middle_click_pos = None
@@ -2087,7 +2088,6 @@ class SettingsDialog(QDialog):
 
         super().reject()
 
-
 # ============================================================
 # MAIN NOTEPAD
 # ============================================================
@@ -2111,12 +2111,15 @@ class MyNotepad(QMainWindow):
         self.indent_size = 4
         self.restore_tabs = True
 
+        # v9.0: Encoding
+        self.current_encoding = "utf-8"
+
         self.recent_files = []
         self.pinned_files = []          # v7.0: pinned/favorite files
 
         # v7.0: Auto save
         self.auto_save_enabled = False
-        self.auto_save_interval = 15    # giây
+        self.auto_save_interval = 15    # seconds
         self.auto_save_on_focus_lost = True
 
         self.tabs = []
@@ -2151,6 +2154,8 @@ class MyNotepad(QMainWindow):
         self.auto_save_debounce.setSingleShot(True)
         self.auto_save_debounce.setInterval(2000)
         self.auto_save_debounce.timeout.connect(self._auto_save_tick)
+
+        self._apply_auto_save_settings()
 
         if not self.restore_session():
             self.add_new_tab()
@@ -2194,6 +2199,8 @@ class MyNotepad(QMainWindow):
         file_path = tab.file_path
         is_modified = tab.is_modified
         original_content = tab.original_content
+        encoding = tab.encoding
+        line_ending = tab.line_ending
 
         self.tab_widget.removeTab(index)
         self.tabs.pop(index)
@@ -2204,7 +2211,8 @@ class MyNotepad(QMainWindow):
             new_window.tab_widget.removeTab(0)
             new_window.tabs.pop(0)
 
-        new_tab = new_window.add_new_tab(file_path, content)
+        new_tab = new_window.add_new_tab(file_path, content, encoding=encoding)
+        new_tab.line_ending = line_ending
         if is_modified:
             new_tab.is_modified = True
             new_tab.original_content = original_content
@@ -2244,9 +2252,10 @@ class MyNotepad(QMainWindow):
             if not file_path or not os.path.isfile(file_path):
                 continue
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                encoding = self._detect_encoding(file_path)
+                with open(file_path, 'r', encoding=encoding) as f:
                     content = f.read()
-                tab = self.add_new_tab(file_path, content)
+                tab = self.add_new_tab(file_path, content, encoding=encoding)
                 if i < len(session_positions):
                     try:
                         pos = int(session_positions[i])
@@ -2450,9 +2459,10 @@ class MyNotepad(QMainWindow):
             return
 
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            encoding = self._detect_encoding(file_path)
+            with open(file_path, 'r', encoding=encoding) as f:
                 content = f.read()
-            self.add_new_tab(file_path, content)
+            self.add_new_tab(file_path, content, encoding=encoding)
             self.apply_font()
             self.add_recent_file(file_path)
         except Exception as e:
@@ -2534,7 +2544,7 @@ class MyNotepad(QMainWindow):
             return self.tabs[index]
         return None
 
-    def add_new_tab(self, file_path=None, content=None):
+    def add_new_tab(self, file_path=None, content=None, encoding="utf-8"):
         editor = CodeEditor(
             self,
             self.dark_mode,
@@ -2562,6 +2572,7 @@ class MyNotepad(QMainWindow):
         editor.textChanged.connect(self.on_text_changed)
 
         tab = EditorTab(editor, file_path, False)
+        tab.encoding = encoding
 
         if content is not None:
             editor.blockSignals(True)
@@ -2569,8 +2580,11 @@ class MyNotepad(QMainWindow):
             editor.blockSignals(False)
             editor.apply_font()
             tab.original_content = content
+            # v9.0: Detect line ending
+            tab.line_ending = self._detect_line_ending(content)
         else:
             tab.original_content = ""
+            tab.line_ending = "lf"
 
         if file_path:
             bm_list = self.load_bookmarks_for(file_path)
@@ -2594,6 +2608,9 @@ class MyNotepad(QMainWindow):
         if 0 <= index < len(self.tabs):
             self.update_cursor_position()
             self.update_title()
+            # v9.0: Refresh labels when switching tab
+            self._update_encoding_label()
+            self._update_line_ending_label()
 
     def update_tab_title(self, index=None):
         if index is None:
@@ -2641,7 +2658,8 @@ class MyNotepad(QMainWindow):
             if tab.file_path:
                 try:
                     content = tab.editor.toPlainText()
-                    with open(tab.file_path, 'w', encoding='utf-8') as f:
+                    content = self._normalize_line_ending(content, tab.line_ending)
+                    with open(tab.file_path, 'w', encoding=tab.encoding, newline='') as f:
                         f.write(content)
                     tab.is_modified = False
                     tab.original_content = content
@@ -2650,7 +2668,7 @@ class MyNotepad(QMainWindow):
                     saved += 1
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Could not save file:\n{tab.file_path}\n\n{str(e)}")
-                    self.status_bar.showMessage(f"Save failed after {saved} file(s)", 3000)
+                    self.status_bar.showMessage(f"Saving failed after {saved} file(s)", 3000)
                     self.update_title()
                     return
             else:
@@ -2665,7 +2683,8 @@ class MyNotepad(QMainWindow):
                     return
                 try:
                     content = tab.editor.toPlainText()
-                    with open(file_path, 'w', encoding='utf-8') as f:
+                    content = self._normalize_line_ending(content, tab.line_ending)
+                    with open(file_path, 'w', encoding=tab.encoding, newline='') as f:
                         f.write(content)
                     tab.file_path = file_path
                     tab.editor.file_path = file_path
@@ -2705,7 +2724,8 @@ class MyNotepad(QMainWindow):
                 continue
             try:
                 content = tab.editor.toPlainText()
-                with open(tab.file_path, 'w', encoding='utf-8') as f:
+                content = self._normalize_line_ending(content, tab.line_ending)
+                with open(tab.file_path, 'w', encoding=tab.encoding, newline='') as f:
                     f.write(content)
                 tab.is_modified = False
                 tab.original_content = content
@@ -2766,7 +2786,7 @@ class MyNotepad(QMainWindow):
                 continue
 
             try:
-                with open(tab.file_path, 'r', encoding='utf-8') as f:
+                with open(tab.file_path, 'r', encoding=tab.encoding) as f:
                     new_content = f.read()
             except Exception as e:
                 errors.append(f"{os.path.basename(tab.file_path)}: {str(e)}")
@@ -2815,7 +2835,6 @@ class MyNotepad(QMainWindow):
             self.status_bar.showMessage(f"Reloaded {reloaded} files", 2000)
             self.show_toast(f"Reloaded {reloaded} files", kind='success')
 
-
     def convert_tabs_to_spaces(self):
         editor = self.current_editor()
         if not isinstance(editor, CodeEditor):
@@ -2851,6 +2870,228 @@ class MyNotepad(QMainWindow):
                 self.update_title()
         else:
             self.status_bar.showMessage("No leading spaces found", 2000)
+
+    # ============ v9.0: ENCODING CONVERSION ============
+    def change_encoding(self, new_encoding):
+        """Change encoding of current file"""
+        tab = self.current_tab()
+        if not tab:
+            return
+
+        # Case 1: Already same encoding
+        if tab.encoding == new_encoding:
+            self.show_toast(
+                f"Already {self._encoding_display_name(new_encoding)}",
+                2000, kind='info'
+            )
+            return
+
+        # Case 2: Tab does not have a path --> only update metadata
+        if not tab.file_path:
+            tab.encoding = new_encoding
+            self._update_encoding_label()
+            self.show_toast(
+                f"Untitled → {self._encoding_display_name(new_encoding)}",
+                3000, kind='info'
+            )
+            return
+
+        # Case 3: Files have paths --> re-reading with new encoding
+        if tab.is_modified:
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                f"File has unsaved changes.\n\n"
+                f"Reload with new encoding "
+                f"'{self._encoding_display_name(new_encoding)}' "
+                f"and lose changes?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self.show_toast("Cancelled", 2000, kind='info')
+                return
+
+        # Case 4: Read file with new encoding
+        try:
+            with open(tab.file_path, 'r', encoding=new_encoding) as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            self.show_toast(
+                f"Cannot decode: {self._encoding_display_name(new_encoding)}",
+                4000, kind='error'
+            )
+            QMessageBox.critical(
+                self, "Encoding Error",
+                f"Cannot decode file with encoding:\n"
+                f"{self._encoding_display_name(new_encoding)}\n\n"
+                f"This file may not be compatible with this encoding."
+            )
+            return
+        except Exception as e:
+            self.show_toast("Cannot read file", 4000, kind='error')
+            QMessageBox.critical(
+                self, "Error",
+                f"Cannot read file:\n{e}"
+            )
+            return
+
+        # Case 5: Update editor
+        cursor_pos = tab.editor.textCursor().position()
+
+        tab.editor.blockSignals(True)
+        tab.editor.setPlainText(content)
+        tab.editor.blockSignals(False)
+        tab.editor.apply_font()
+        tab.original_content = content
+        tab.is_modified = False
+        tab.encoding = new_encoding
+
+        # Restore cursor
+        doc_len = tab.editor.document().characterCount() - 1
+        new_pos = min(cursor_pos, max(0, doc_len))
+        cursor = tab.editor.textCursor()
+        cursor.setPosition(new_pos)
+        tab.editor.setTextCursor(cursor)
+
+        self._update_encoding_label()
+        filename = os.path.basename(tab.file_path)
+        self.show_toast(
+            f"{filename} → {self._encoding_display_name(new_encoding)}",
+            3000, kind='success'
+        )
+
+    def _encoding_display_name(self, encoding):
+        """Convert encoding key --> displayed name"""
+        mapping = {
+            'utf-8': 'UTF-8',
+            'utf-8-sig': 'UTF-8 with BOM',
+            'utf-16': 'UTF-16',
+            'utf-16-le': 'UTF-16 LE',
+            'utf-16-be': 'UTF-16 BE',
+            'utf-32': 'UTF-32',
+            'cp1252': 'ANSI (Windows-1252)',
+        }
+        return mapping.get(encoding, encoding.upper())
+
+    def _update_encoding_label(self):
+        """Update label encoding on status bar"""
+        tab = self.current_tab()
+        if tab:
+            self.encoding_label.setText(self._encoding_display_name(tab.encoding))
+        else:
+            self.encoding_label.setText("UTF-8")
+
+    # ============ v9.0: LINE ENDING CONVERSION ============
+    def change_line_ending(self, new_ending):
+        """Switch line ending of current file"""
+        tab = self.current_tab()
+        if not tab:
+            return
+
+        # Case 1: Already same line ending
+        if tab.line_ending == new_ending:
+            self.show_toast(
+                f"Already {self._line_ending_display_name(new_ending)}",
+                2000, kind='info'
+            )
+            return
+
+        # Case 2: Tab does not have a path --> only update metadata
+        if not tab.file_path:
+            tab.line_ending = new_ending
+            tab.is_modified = True
+            self.update_tab_title()
+            self.update_title()
+            self._update_line_ending_label()
+            self.show_toast(
+                f"Untitled → {self._line_ending_display_name(new_ending)}",
+                3000, kind='info'
+            )
+            return
+
+        # Case 3: File has path --> convert content
+        ending_map = {
+            "crlf": "\r\n",
+            "lf": "\n",
+            "cr": "\r",
+        }
+        new_char = ending_map.get(new_ending, "\n")
+
+        editor = tab.editor
+        cursor_pos = editor.textCursor().position()
+        scroll_pos = editor.verticalScrollBar().value()
+
+        content = editor.toPlainText()
+        content_lf = content.replace('\r\n', '\n').replace('\r', '\n')
+
+        if new_ending == "crlf":
+            new_content = content_lf.replace('\n', '\r\n')
+        elif new_ending == "cr":
+            new_content = content_lf.replace('\n', '\r')
+        else:
+            new_content = content_lf
+
+        editor.blockSignals(True)
+        editor.setPlainText(new_content)
+        editor.blockSignals(False)
+        editor.apply_font()
+
+        doc_len = editor.document().characterCount() - 1
+        new_pos = min(cursor_pos, max(0, doc_len))
+        cursor = editor.textCursor()
+        cursor.setPosition(new_pos)
+        editor.setTextCursor(cursor)
+        editor.verticalScrollBar().setValue(scroll_pos)
+
+        tab.line_ending = new_ending
+        tab.is_modified = True
+
+        self.update_tab_title()
+        self.update_title()
+        self._update_line_ending_label()
+
+        filename = os.path.basename(tab.file_path)
+        self.show_toast(
+            f"{filename} → {self._line_ending_display_name(new_ending)}",
+            3000, kind='success'
+        )
+
+    def _line_ending_display_name(self, ending):
+        """Convert ending key --> displaying name"""
+        mapping = {
+            "crlf": "Windows (CRLF)",
+            "lf": "Unix (LF)",
+            "cr": "Macintosh (CR)",
+        }
+        return mapping.get(ending, "Unknown")
+
+    def _update_line_ending_label(self):
+        """Update label line ending on status bar"""
+        tab = self.current_tab()
+        if tab:
+            self.line_ending_label.setText(
+                self._line_ending_display_name(tab.line_ending)
+            )
+        else:
+            self.line_ending_label.setText("None")
+
+    def _detect_line_ending(self, content):
+        """Detect line ending from contexts"""
+        if '\r\n' in content:
+            return "crlf"
+        elif '\r' in content:
+            return "cr"
+        else:
+            return "lf"
+
+    def _normalize_line_ending(self, content, ending):
+        """Standardize line ending of content"""
+        content_lf = content.replace('\r\n', '\n').replace('\r', '\n')
+        if ending == "crlf":
+            return content_lf.replace('\n', '\r\n')
+        elif ending == "cr":
+            return content_lf.replace('\n', '\r')
+        return content_lf
 
     def close_all_tabs(self):
         if not self.tabs:
@@ -3167,7 +3408,7 @@ class MyNotepad(QMainWindow):
                 return
 
         try:
-            with open(tab.file_path, 'r', encoding='utf-8') as f:
+            with open(tab.file_path, 'r', encoding=tab.encoding) as f:
                 content = f.read()
 
             tab.editor.blockSignals(True)
@@ -3205,7 +3446,8 @@ class MyNotepad(QMainWindow):
         if tab.file_path:
             try:
                 content = tab.editor.toPlainText()
-                with open(tab.file_path, 'w', encoding='utf-8') as f:
+                content = self._normalize_line_ending(content, tab.line_ending)
+                with open(tab.file_path, 'w', encoding=tab.encoding, newline='') as f:
                     f.write(content)
                 tab.is_modified = False
                 tab.original_content = content
@@ -3234,7 +3476,8 @@ class MyNotepad(QMainWindow):
         if file_path:
             try:
                 content = tab.editor.toPlainText()
-                with open(file_path, 'w', encoding='utf-8') as f:
+                content = self._normalize_line_ending(content, tab.line_ending)
+                with open(file_path, 'w', encoding=tab.encoding, newline='') as f:
                     f.write(content)
                 tab.file_path = file_path
                 tab.editor.file_path = file_path
@@ -3378,24 +3621,13 @@ class MyNotepad(QMainWindow):
 
         self.position_label.setText(f"Ln {line_number}, Col {column_number}")
 
-        doc = editor.document()
-        if doc.characterCount() <= 1:
-            self.line_ending_label.setText("None")
-            return
-
-        last_cursor = QTextCursor(doc)
-        last_cursor.movePosition(QTextCursor.MoveOperation.End)
-        last_cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, 2)
-        last_chars = last_cursor.selectedText()
-
-        if last_chars.endswith('\r\n'):
-            self.line_ending_label.setText("Windows (CRLF)")
-        elif last_chars.endswith('\n'):
-            self.line_ending_label.setText("Unix (LF)")
-        elif last_chars.endswith('\r'):
-            self.line_ending_label.setText("Macintosh (CR)")
-        else:
-            self.line_ending_label.setText("None")
+        # v9.0: Update labels
+        tab = self.current_tab()
+        if tab:
+            self.encoding_label.setText(self._encoding_display_name(tab.encoding))
+            self.line_ending_label.setText(
+                self._line_ending_display_name(tab.line_ending)
+            )
 
     def apply_theme(self):
         if self.dark_mode:
@@ -3670,6 +3902,42 @@ class MyNotepad(QMainWindow):
         spaces_to_tabs_action.triggered.connect(self.convert_spaces_to_tabs)
         convert_menu.addAction(spaces_to_tabs_action)
 
+        # v9.0: Encoding submenu
+        format_menu.addSeparator()
+        encoding_menu = format_menu.addMenu("Encoding")
+
+        encodings = [
+            ("UTF-8", "utf-8"),
+            ("UTF-8 with BOM", "utf-8-sig"),
+            ("UTF-16 LE", "utf-16-le"),
+            ("UTF-16 BE", "utf-16-be"),
+            ("UTF-16", "utf-16"),
+            ("ANSI (Windows-1252)", "cp1252"),
+        ]
+
+        for label, enc_key in encodings:
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda checked=False, e=enc_key: self.change_encoding(e)
+            )
+            encoding_menu.addAction(action)
+
+        # v9.0: Line Endings submenu
+        line_ending_menu = format_menu.addMenu("Line Endings")
+
+        endings = [
+            ("Windows (CRLF)", "crlf"),
+            ("Unix (LF)", "lf"),
+            ("Macintosh (CR)", "cr"),
+        ]
+
+        for label, ending_key in endings:
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda checked=False, e=ending_key: self.change_line_ending(e)
+            )
+            line_ending_menu.addAction(action)
+
         view_menu = menu_bar.addMenu("View")
 
         status_bar_action = QAction("Status Bar", self)
@@ -3838,7 +4106,7 @@ class MyNotepad(QMainWindow):
         QMessageBox.about(self, "About coding-pudding",
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
-            "<p><b>Version:</b> 8.0</p>"
+            "<p><b>Version:</b> 9.0</p>"
             "<p><b>License:</b> GPL v3.0</p>")
 
     def toggle_dark_mode(self, checked):
@@ -3922,13 +4190,50 @@ class MyNotepad(QMainWindow):
             "Python Files (*.py);;Text Files (*.txt);;All Files (*)"
         )
         if file_path:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                self.add_new_tab(file_path, content)
-                self.apply_font()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not open file: {str(e)}")
+            self._open_file_with_encoding(file_path)
+
+    def _open_file_with_encoding(self, file_path):
+        """Open files with auto-detected encoding"""
+        encoding = self._detect_encoding(file_path)
+        try:
+            with open(file_path, 'r', encoding=encoding) as f:
+                content = f.read()
+            self.add_new_tab(file_path, content, encoding=encoding)
+            self.apply_font()
+        except UnicodeDecodeError:
+            QMessageBox.critical(
+                self, "Error",
+                f"Cannot decode file:\n{file_path}\n\n"
+                f"Tried encoding: {encoding}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not open file: {str(e)}")
+
+    def _detect_encoding(self, file_path):
+        """Auto-detect files' encoding"""
+        try:
+            with open(file_path, 'rb') as f:
+                raw = f.read(4)
+        except Exception:
+            return "utf-8"
+
+        # BOM detection
+        if raw.startswith(b'\xef\xbb\xbf'):
+            return "utf-8-sig"
+        if raw.startswith(b'\xff\xfe\x00\x00') or raw.startswith(b'\x00\x00\xfe\xff'):
+            return "utf-32"
+        if raw.startswith(b'\xff\xfe'):
+            return "utf-16-le"
+        if raw.startswith(b'\xfe\xff'):
+            return "utf-16-be"
+
+        # Try UTF-8, fallback to Windows-1252
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                f.read(1024)
+            return "utf-8"
+        except UnicodeDecodeError:
+            return "cp1252"  # Windows-1252 (ANSI)
 
     def save_file(self):
         index = self.tab_widget.currentIndex()
@@ -3991,9 +4296,10 @@ class MyNotepad(QMainWindow):
             if not os.path.isfile(file_path):
                 continue
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                encoding = self._detect_encoding(file_path)
+                with open(file_path, 'r', encoding=encoding) as f:
                     content = f.read()
-                self.add_new_tab(file_path, content)
+                self.add_new_tab(file_path, content, encoding=encoding)
                 self.apply_font()
             except UnicodeDecodeError:
                 errors.append(f"{os.path.basename(file_path)}: binary or non-UTF-8 file")
@@ -4284,7 +4590,7 @@ if __name__ == "__main__":
     if sys.platform == "win32":
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(AUMID)
-        # Đăng ký AUMID vào registry (để Windows hiển thị đúng tên + icon)
+        # Register AUMID to registry (for Windows to display the right name + icon)
         if not is_aumid_registered():
             register_aumid()
 
@@ -4297,9 +4603,10 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         file_path = sys.argv[1]
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            encoding = window._detect_encoding(file_path)
+            with open(file_path, 'r', encoding=encoding) as f:
                 content = f.read()
-            window.add_new_tab(file_path, content)
+            window.add_new_tab(file_path, content, encoding=encoding)
             window.apply_font()
         except Exception as e:
             print(f"Error opening file: {e}")
