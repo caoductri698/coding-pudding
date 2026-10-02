@@ -63,6 +63,8 @@
 - **Pin/Unpin favorite recent files** - **PIN**/**UNPIN** important files to the top of the `Open Recent` menu.
 - **Current line highlight** - The line containing the cursor is **HIGHLIGHTED** with a subtle background color.
 - **Middle-click close tab** - **MIDDLE-CLICK** on any tab to close it. Press and release on the same tab to close; press on one tab and release on another to cancel.
+- **Encoding conversion** - Change file encoding between **UTF-8**, **UTF-8 with BOM**, **UTF-16 LE**, **UTF-16 BE**, **UTF-16**, and **ANSI (Windows-1252)**. Auto-detect encoding when opening files via BOM or heuristic. Go to `Format` --> `Encoding`.
+- **Line ending conversion** - Switch line endings between **Windows (CRLF)**, **Unix (LF)**, and **Macintosh (CR)**. Auto-detect line ending when opening files. Go to `Format` --> `Line Endings`.
 
 ---
 
@@ -237,6 +239,58 @@ On Windows 10/11, the system automatically converts the balloon tip into a moder
 App identity registration (for the correct app name + icon on the toast):
 - Register: Help --> Register App Identity (Toast).
 - Unregister: Help --> Unregister App Identity.
+
+### Encoding conversion
+
+The editor supports the following encodings:
+
+  * **UTF-8** (default, no BOM) \- universal, recommended
+  * **UTF-8 with BOM** \- UTF-8 with byte-order mark (some Windows apps require this)
+  * **UTF-16 LE** \- 16-bit little-endian (Windows default for UTF-16)
+  * **UTF-16 BE** \- 16-bit big-endian
+  * **UTF-16** \- UTF-16 with BOM detection
+  * **ANSI (Windows-1252)** \- legacy Windows encoding
+
+**Auto-detection:** When you open a file, the editor auto-detects the encoding:
+  1. Reads the first 4 bytes to check for BOM (byte-order mark)
+  2. If no BOM, tries to decode as UTF-8
+  3. If UTF-8 fails, falls back to Windows-1252 (ANSI)
+
+**Manual conversion:**
+  1. Open a file (`Ctrl + O`)
+  2. Go to `Format` --> `Encoding`
+  3. Choose the target encoding
+  4. If the file has unsaved changes, the editor asks for confirmation
+  5. The status bar updates to show the new encoding
+
+**Notes:**
+  * The encoding is stored **per tab** — each open file has its own encoding
+  * When saving, the file is written with the tab's current encoding
+  * If the file cannot be decoded with the new encoding, an error dialog appears
+
+### Line ending conversion
+
+The editor supports three line ending styles:
+
+  * **Windows (CRLF)** \- `\r\n` \- used by Notepad, most Windows apps
+  * **Unix (LF)** \- `\n` \- used by Linux, macOS, Git
+  * **Macintosh (CR)** \- `\r` \- used by classic Mac OS (pre-OS X)
+
+**Auto-detection:** When you open a file, the editor scans the content:
+  * If `\r\n` found --> **CRLF**
+  * Else if `\r` found --> **CR**
+  * Else --> **LF**
+
+**Manual conversion:**
+  1. Open a file (`Ctrl + O`)
+  2. Go to `Format` --> `Line Endings`
+  3. Choose the target line ending
+  4. The status bar updates to show the new line ending
+
+**Notes:**
+  * The line ending is stored **per tab**
+  * When saving, the content is normalized to match the tab's line ending
+  * Converting marks the file as **modified** (remember to save)
 
 ---
 
