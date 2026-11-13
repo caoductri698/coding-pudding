@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QPlainTextEdit,
                              QSpinBox, QComboBox, QInputDialog, QTableWidget,
                              QTableWidgetItem, QHeaderView, QTextEdit,
                              QGraphicsOpacityEffect)
-from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QSettings, QPropertyAnimation
+from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QSettings, QPropertyAnimation, QThread, pyqtSignal
 from PyQt6.QtGui import (QFont, QColor, QTextCursor, QKeySequence, QIcon,
                          QTextDocument, QPainter, QTextFormat, QCursor,
                          QTextCharFormat, QFontDatabase, QAction, QPen,
@@ -386,6 +386,70 @@ def shutdown_balloon_system():
 
     except Exception:
         pass
+
+# ============================================================
+# v10.0: SEARCH IN FILES - THREAD
+# ============================================================
+class SearchThread(QThread):
+    result_found = pyqtSignal(list)
+    progress_updated = pyqtSignal(int, int)
+
+    def __init__(self, folder, keyword, case_sensitive, whole_word, use_regex):
+        super().__init__()
+        self.folder = folder
+        self.keyword = keyword
+        self.case_sensitive = case_sensitive
+        self.whole_word = whole_word
+        self.use_regex = use_regex
+
+    def run(self):
+        results = []
+        skip_dirs = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'build', 'dist', '.idea', '.vscode'}
+        skip_exts = {'.exe', '.dll', '.png', '.jpg', '.jpeg', '.ico', '.zip', '.rar', '.pdf', '.pyc', '.pyo', '.mp4', '.mp3', '.db'}
+
+        all_files = []
+        for root, dirs, files in os.walk(self.folder):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            for fname in files:
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in skip_exts:
+                    all_files.append(os.path.join(root, fname))
+
+        total_files = len(all_files)
+        if total_files == 0:
+            self.result_found.emit([])
+            return
+
+        flags = 0 if self.case_sensitive else re.IGNORECASE
+        if self.use_regex:
+            try:
+                pattern = re.compile(self.keyword, flags)
+            except re.error:
+                self.result_found.emit([])
+                return
+        else:
+            if self.whole_word:
+                pattern = re.compile(r'\b' + re.escape(self.keyword) + r'\b', flags)
+            else:
+                pattern = re.compile(re.escape(self.keyword), flags)
+
+        # 2. Quét từng file
+        for i, filepath in enumerate(all_files):
+            self.progress_updated.emit(i + 1, total_files)
+            
+            try:
+                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line_num, line in enumerate(f, 1):
+                        if pattern.search(line):
+                            results.append({
+                                'file': filepath,
+                                'line': line_num,
+                                'content': line.strip()
+                            })
+            except Exception:
+                continue
+
+        self.result_found.emit(results)
 
 # ============================================================
 # WINDOWS-STYLE NOTIFICATION (fallback for non-Windows)
@@ -976,28 +1040,42 @@ class CodeEditor(QPlainTextEdit):
         return False
 
     def trim_trailing_spaces(self):
+        """Remove trailing spaces without resetting the cursor"""
         cursor = self.textCursor()
         original_pos = cursor.position()
-        scroll_pos = self.verticalScrollBar().value()
+        
+        cursor.beginEditBlock()
+        
+        doc = self.document()
+        block = doc.begin()
+        changed = False
 
-        text = self.toPlainText()
-        lines = text.split('\n')
-        new_lines = [line.rstrip() for line in lines]
-        new_text = '\n'.join(new_lines)
+        while block.isValid():
+            text = block.text()
+            stripped = text.rstrip()
+            
+            if text != stripped:
+                start_pos = block.position() + len(stripped)
+                end_pos = block.position() + len(text)
+                
+                trim_cursor = QTextCursor(doc)
+                trim_cursor.setPosition(start_pos)
+                trim_cursor.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
+                trim_cursor.removeSelectedText()
+                changed = True
+                
+            block = block.next()
+            
+        cursor.endEditBlock()
 
-        if new_text != text:
-            self.blockSignals(True)
-            self.setPlainText(new_text)
-            self.blockSignals(False)
-
-            doc_length = self.document().characterCount() - 1
+        # Khôi phục lại vị trí con trỏ ban đầu
+        if changed:
+            doc_length = doc.characterCount() - 1
             new_pos = min(original_pos, doc_length)
             cursor.setPosition(new_pos)
             self.setTextCursor(cursor)
-
-            self.verticalScrollBar().setValue(scroll_pos)
-            return True
-        return False
+            
+        return changed
 
     def get_word_count(self):
         text = self.toPlainText()
@@ -3440,6 +3518,8 @@ class MyNotepad(QMainWindow):
             return False
         tab = self.tabs[index]
 
+        cursor_pos = tab.editor.textCursor().position()
+
         if self.trim_on_save:
             tab.editor.trim_trailing_spaces()
 
@@ -3454,6 +3534,13 @@ class MyNotepad(QMainWindow):
                 self.update_tab_title(index)
                 self.update_title()
                 self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
+
+                doc_len = tab.editor.document().characterCount() - 1
+                new_pos = min(cursor_pos, max(0, doc_len))
+                cursor = tab.editor.textCursor()
+                cursor.setPosition(new_pos)
+                tab.editor.setTextCursor(cursor)
+
                 return True
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not save file: {str(e)}")
@@ -3851,6 +3938,11 @@ class MyNotepad(QMainWindow):
 
         edit_menu.addSeparator()
 
+        search_files_action = QAction("Search in Files...", self)
+        search_files_action.setShortcut("Ctrl+Shift+F")
+        search_files_action.triggered.connect(self.show_search_in_files)
+        edit_menu.addAction(search_files_action)
+
         select_all_action = QAction("Select All", self)
         select_all_action.setShortcut("Ctrl+A")
         select_all_action.triggered.connect(lambda: self.current_editor().selectAll() if self.current_editor() else None)
@@ -4106,7 +4198,7 @@ class MyNotepad(QMainWindow):
         QMessageBox.about(self, "About coding-pudding",
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
-            "<p><b>Version:</b> 9.0</p>"
+            "<p><b>Version:</b> 10.0</p>"
             "<p><b>License:</b> GPL v3.0</p>")
 
     def toggle_dark_mode(self, checked):
@@ -4180,6 +4272,45 @@ class MyNotepad(QMainWindow):
         if editor:
             dialog = GotoDialog(editor)
             dialog.exec()
+
+    def show_search_in_files(self):
+        current_tab = self.current_tab()
+        default_folder = None
+        if current_tab and current_tab.file_path:
+            default_folder = os.path.dirname(current_tab.file_path)
+        
+        input_dialog = SearchInFilesInputDialog(self, default_folder)
+        
+        if input_dialog.exec() == QDialog.DialogCode.Accepted:
+            params = input_dialog.search_params
+            results_dialog = SearchInFilesResultsDialog(self, params)
+            results_dialog.exec()
+
+    def open_file_at_line(self, file_path, line_num):
+        normalized_path = os.path.normcase(os.path.abspath(file_path))
+        
+        for i, tab in enumerate(self.tabs):
+            if tab.file_path:
+                tab_path = os.path.normcase(os.path.abspath(tab.file_path))
+                if tab_path == normalized_path:
+                    self.tab_widget.setCurrentIndex(i)
+                    tab.editor._goto_line(line_num)
+                    return
+                    
+        if not os.path.isfile(file_path):
+            QMessageBox.warning(self, "File Not Found", f"File no longer exists:\n{file_path}")
+            return
+            
+        try:
+            encoding = self._detect_encoding(file_path)
+            with open(file_path, 'r', encoding=encoding) as f:
+                content = f.read()
+                
+            tab = self.add_new_tab(file_path, content, encoding=encoding)
+            self.apply_font()
+            tab.editor._goto_line(line_num)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Cannot open file:\n{e}")
 
     def new_file(self):
         self.add_new_tab()
@@ -4313,6 +4444,257 @@ class MyNotepad(QMainWindow):
                 "The following files are not supported:\n\n" + "\n".join(errors)
             )
 
+# ============================================================
+# v10.0: SEARCH IN FILES - DIALOG 1 (INPUT)
+# ============================================================
+class SearchInFilesInputDialog(QDialog):
+    def __init__(self, parent_notepad, initial_folder=None):
+        super().__init__(parent_notepad)
+        self.parent_notepad = parent_notepad
+        self.setWindowTitle("Search in Files")
+        self.setFixedSize(500, 220)
+        self.setModal(True)
+        
+        self.search_params = None
+        
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+        
+        find_row = QHBoxLayout()
+        find_row.addWidget(QLabel("Find what:"))
+        self.find_input = QLineEdit()
+        find_row.addWidget(self.find_input)
+        layout.addLayout(find_row)
+        
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(QLabel("Folder:"))
+        self.folder_input = QLineEdit()
+        if initial_folder:
+            self.folder_input.setText(initial_folder)
+        folder_row.addWidget(self.folder_input)
+        
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self._browse_folder)
+        folder_row.addWidget(browse_btn)
+        layout.addLayout(folder_row)
+        
+        options_row = QHBoxLayout()
+        self.case_check = QCheckBox("Match case")
+        self.word_check = QCheckBox("Whole word")
+        self.regex_check = QCheckBox("Regex")
+        options_row.addWidget(self.case_check)
+        options_row.addWidget(self.word_check)
+        options_row.addWidget(self.regex_check)
+        options_row.addStretch()
+        layout.addLayout(options_row)
+        
+        layout.addStretch()
+        
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        
+        search_btn = QPushButton("Search")
+        search_btn.setDefault(True)
+        search_btn.clicked.connect(self._on_search_clicked)
+        button_row.addWidget(search_btn)
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        
+        layout.addLayout(button_row)
+        self.setLayout(layout)
+        
+        self.find_input.setFocus()
+    
+    def _browse_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "Choose folder", self.folder_input.text()
+        )
+        if folder:
+            self.folder_input.setText(folder)
+    
+    def _on_search_clicked(self):
+        keyword = self.find_input.text().strip()
+        folder = self.folder_input.text().strip()
+        
+        if not keyword:
+            QMessageBox.warning(self, "Search", "Please enter a keyword.")
+            return
+        
+        if not os.path.isdir(folder):
+            QMessageBox.warning(self, "Search", "Please choose a valid folder.")
+            return
+        
+        # Lưu params để Dialog 2 sử dụng
+        self.search_params = {
+            'keyword': keyword,
+            'folder': folder,
+            'case_sensitive': self.case_check.isChecked(),
+            'whole_word': self.word_check.isChecked(),
+            'use_regex': self.regex_check.isChecked(),
+        }
+        self.accept()
+
+# ============================================================
+# v10.0: SEARCH IN FILES - DIALOG 2 (RESULTS)
+# ============================================================
+class SearchInFilesResultsDialog(QDialog):
+    def __init__(self, parent_notepad, search_params):
+        super().__init__(parent_notepad)
+        self.parent_notepad = parent_notepad
+        self.search_params = search_params
+        self.results = []
+        self.filtered_results = []
+        
+        self.setWindowTitle(f'Search Results — "{search_params["keyword"]}"')
+        self.setFixedSize(850, 550)
+        self.setModal(False)
+        
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+        
+        info_label = QLabel(f'Searching in: <code>{search_params["folder"]}</code>')
+        layout.addWidget(info_label)
+        
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("Sort by:"))
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItem("Alphabetical (A-Z)", "alphabetical")
+        self.sort_combo.addItem("Time (Newest first)", "time")
+        self.sort_combo.currentIndexChanged.connect(self._apply_filter)
+        filter_row.addWidget(self.sort_combo)
+        
+        filter_row.addWidget(QLabel("Type:"))
+        self.type_combo = QComboBox()
+        self.type_combo.addItem("All", "all")
+        for ext in [".py", ".txt", ".md", ".json", ".html", ".css", ".js"]:
+            self.type_combo.addItem(ext, ext)
+        self.type_combo.currentIndexChanged.connect(self._apply_filter)
+        filter_row.addWidget(self.type_combo)
+        
+        filter_row.addStretch()
+        layout.addLayout(filter_row)
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["#", "File", "Line", "Content"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        
+        self.table.cellClicked.connect(self._on_row_clicked)
+        self.table.doubleClicked.connect(self._on_row_double_clicked)
+        
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(0, 40)
+        self.table.setColumnWidth(1, 200)
+        self.table.setColumnWidth(2, 60)
+        
+        layout.addWidget(self.table)
+        
+        self.summary_label = QLabel("Searching...")
+        self.summary_label.setStyleSheet("font-weight: bold; color: #0078d4;")
+        layout.addWidget(self.summary_label)
+        
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        button_row.addWidget(close_btn)
+        layout.addLayout(button_row)
+        
+        self.setLayout(layout)
+        
+        self._start_search()
+    
+    def _start_search(self):
+        self.search_thread = SearchThread(
+            folder=self.search_params['folder'],
+            keyword=self.search_params['keyword'],
+            case_sensitive=self.search_params['case_sensitive'],
+            whole_word=self.search_params['whole_word'],
+            use_regex=self.search_params['use_regex']
+        )
+        self.search_thread.progress_updated.connect(self._on_progress)
+        self.search_thread.result_found.connect(self._on_search_finished)
+        self.search_thread.start()
+    
+    def _on_progress(self, current, total):
+        self.summary_label.setText(f"Searching... {current}/{total} files")
+    
+    def _on_search_finished(self, results):
+        self.results = results
+        self._apply_filter()
+    
+    def _apply_filter(self):
+        if not self.results:
+            self.summary_label.setText("No results found.")
+            self.table.setRowCount(0)
+            return
+
+        results = self.results.copy()
+        
+        # Lọc theo file type
+        file_type = self.type_combo.currentData()
+        if file_type and file_type != 'all':
+            results = [r for r in results if r['file'].lower().endswith(file_type)]
+        
+        # Sắp xếp
+        sort_mode = self.sort_combo.currentData()
+        if sort_mode == 'alphabetical':
+            results.sort(key=lambda r: (os.path.basename(r['file']).lower(), r['line']))
+        elif sort_mode == 'time':
+            results.sort(key=lambda r: os.path.getmtime(r['file']), reverse=True)
+        
+        self.filtered_results = results
+        self._refresh_table()
+    
+    def _refresh_table(self):
+        self.table.setRowCount(len(self.filtered_results))
+        
+        for row, result in enumerate(self.filtered_results):
+            item_num = QTableWidgetItem(str(row + 1))
+            item_num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 0, item_num)
+            
+            item_file = QTableWidgetItem(os.path.basename(result['file']))
+            item_file.setToolTip(result['file'])
+            self.table.setItem(row, 1, item_file)
+            
+            item_line = QTableWidgetItem(str(result['line']))
+            item_line.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 2, item_line)
+            
+            content = result['content']
+            if len(content) > 100:
+                content = content[:97] + "..."
+            self.table.setItem(row, 3, QTableWidgetItem(content))
+        
+        num_matches = len(self.filtered_results)
+        num_files = len(set(r['file'] for r in self.filtered_results))
+        self.summary_label.setText(f"Total: {num_matches} matches in {num_files} files")
+    
+    def _open_result(self, row):
+        if row < 0 or row >= len(self.filtered_results):
+            return
+        result = self.filtered_results[row]
+        
+        # Gọi hàm thông minh bên MyNotepad để mở file
+        self.parent_notepad.open_file_at_line(result['file'], result['line'])
+        
+    def _on_row_clicked(self, row, col):
+        self._open_result(row)
+        
+    def _on_row_double_clicked(self, index):
+        self._open_result(index.row())
+        self.close()
 
 # ============================================================
 # DIALOGS
