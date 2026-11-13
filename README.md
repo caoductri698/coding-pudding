@@ -28,6 +28,11 @@
 </p>
 
 <p align="center">
+  <img src="screenshots/search_in_files.PNG" width="45%" />
+  <img src="screenshots/search_in_files_output.PNG" width="45%" />
+</p>
+
+<p align="center">
   <img src="screenshots/notification.PNG" width="45%" />
 </p>
 
@@ -35,36 +40,35 @@
 
 ## Features
 
-- **Tabs** - Open **MULTIPLE** files in one window.
-- **Dark mode** - Protect your eyes during **LONG** coding sessions.
-- **Automatic indentation** - **AUTOMATICALLY** indent after `:` (no more typing 4 spaces manually).
-- **Bracket matching** - **AUTOMATICALLY** close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
-- **Smart bracket deletion** - Delete **MATCHING BRACKET PAIRS** intelligently.
-- **Tear-off tabs** - **DRAG** a tab out to create a new window with that file.
-- **Auto-scroll** - **MIDDLE-CLICK** to create an **ANCHOR AND SCROLL** automatically.
-- **Toggle comment** - `Ctrl + /` to **COMMENT**/**UNCOMMENT** selected lines.
-- **Line numbers** - Easily locate your code by **LINE NUMBER**.
-- **Find / Replace / Go To** - Full **SEARCH**, **REPLACE**, and **NAVIGATION** support.
-- **Auto-saving settings** - Remembers your **THEME** (dark/light) and **WINDOW SIZE**.
-- **"Open with coding-pudding"** - **RIGHT-CLICK** any file to open it directly.
-- **Word counting** - Press `Ctrl + Shift + W` to open the **`WORD COUNT`** dialog.
-- **Horizontal scrolling** - Press `Shift + Scroll` to do **HORIZONTAL SCROLL**.
-- **Settings dialog** - Press `Ctrl + ,` to **CONFIGURE** font, font size, theme, and editor behavior.
-- **Remember opened tabs** - The editor **REMEMBERS** tabs from the last coding session.
-- **Tab context menu** - Right-click a tab to open a **CONTEXT MENU**.
-- **Close all tabs** - Press `Ctrl + Alt + W` to **CLOSE ALL** tabs (with unsaved-changes warning).
-- **Indentation size setting** - Change indentation **SIZE** in the `Settings` dialog.
-- **Bookmarks** - **MARK** important parts of your project.
-- **Open Recent files** - `File` --> `Open Recent` to show the **TEN** most recently opened files.
-- **Desktop notifications** - **TOAST NOTIFICATIONS** appear at the bottom-right of the screen with the app icon and name. Falls back to **IN-APP** toast when meeting errors.
-- **Tab elide** - Long file names are elided in the middle; no **TAB STRETCHING**. Hover to see the full path.
-- **Convert indentation** - Convert leading whitespace between **TABS** and **SPACES** with `Format` --> `Convert Indentation`.
-- **Auto save** - Automatically save **MODIFIED** files at a configurable interval (default: 15 seconds). Also saves when switching tabs or losing window focus. Enable in `Settings` --> `Auto Save`.
-- **Pin/Unpin favorite recent files** - **PIN**/**UNPIN** important files to the top of the `Open Recent` menu.
-- **Current line highlight** - The line containing the cursor is **HIGHLIGHTED** with a subtle background color.
-- **Middle-click close tab** - **MIDDLE-CLICK** on any tab to close it. Press and release on the same tab to close; press on one tab and release on another to cancel.
-- **Encoding conversion** - Change file encoding between **UTF-8**, **UTF-8 with BOM**, **UTF-16 LE**, **UTF-16 BE**, **UTF-16**, and **ANSI (Windows-1252)**. Auto-detect encoding when opening files via BOM or heuristic. Go to `Format` --> `Encoding`.
-- **Line ending conversion** - Switch line endings between **Windows (CRLF)**, **Unix (LF)**, and **Macintosh (CR)**. Auto-detect line ending when opening files. Go to `Format` --> `Line Endings`.
+- **Tabs** — Open multiple files in one window.
+- **Search in Files** — Search for any string across your entire project with instant jump-to-line and filtering.
+- **Encoding conversion** — Change file encoding between UTF-8, UTF-8 BOM, UTF-16 LE/BE, UTF-16, and ANSI (Windows-1252).
+- **Line ending conversion** — Switch line endings between Windows (CRLF), Unix (LF), and Macintosh (CR).
+- **Auto save** — Automatically save modified files at a configurable interval. Also saves when switching tabs or losing focus.
+- **Pin/Unpin favorite recent files** — Pin important files to the top of the `Open Recent` menu.
+- **Desktop notifications** — Toast notifications appear at the bottom-right of the screen with the app icon and name.
+- **Current line highlight** — The line containing the cursor is highlighted with a subtle background color.
+- **Middle-click close tab** — Middle-click any tab to close it (Chrome-style).
+- **Dark mode** — Protect your eyes during long coding sessions.
+- **Automatic indentation** — Automatically indent after `:`.
+- **Bracket matching** — Automatically close opening brackets `()`, `[]`, `{}`, `<>`, `""`, `''`.
+- **Smart bracket deletion** — Delete matching bracket pairs intelligently.
+- **Tear-off tabs** — Drag a tab out to create a new window with that file.
+- **Auto-scroll** — Middle-click to create an anchor and scroll automatically.
+- **Toggle comment** — `Ctrl + /` to comment/uncomment selected lines.
+- **Line numbers** — Easily locate your code by line number.
+- **Find / Replace / Go To** — Full search, replace, and navigation support.
+- **"Open with coding-pudding"** — Right-click any file to open it directly.
+- **Word counting** — Press `Ctrl + Shift + W` to open the `Word Count` dialog.
+- **Horizontal scrolling** — Press `Shift + Scroll` to do horizontal scroll.
+- **Settings dialog** — Press `Ctrl + ,` to configure font, font size, theme, and editor behavior.
+- **Remember opened tabs** — The editor remembers tabs from the last coding session.
+- **Tab context menu** — Right-click a tab to open a context menu.
+- **Close all tabs** — Press `Ctrl + Alt + W` to close all tabs.
+- **Bookmarks** — Mark important parts of your project.
+- **Open Recent files** — `File` → `Open Recent` to show the 10 most recently opened files.
+- **Tab elide** — Long file names are elided in the middle; tabs don't stretch.
+- **Convert indentation** — Convert leading whitespace between tabs and spaces.
 
 ---
 
@@ -146,6 +150,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `F2` or `Fn + F2` | Jump to the next bookmark |
 | `Shift + F2` or `Shift + Fn + F2` | Jump to the previous bookmark |
 | `Ctrl + Shift + B` | Open `Bookmarks` dialog |
+| `Ctrl + Shift + F` | Search in Files |
 
 ---
 
@@ -292,6 +297,21 @@ The editor supports three line ending styles:
   * When saving, the content is normalized to match the tab's line ending
   * Converting marks the file as **modified** (remember to save)
 
+### Search in Files
+
+1. Press `Ctrl + Shift + F` (or go to `Edit` --> `Search in Files...`).
+2. Enter the keyword you want to find.
+3. Choose the folder to search in.
+4. Set options: **Match case**, **Whole word**, or **Regex**.
+5. Click **Search**.
+
+A new window will appear with the search results:
+- **Sort by**: Alphabetical or Time (Newest first).
+- **Type**: Filter by file extension (e.g., `.py`, `.txt`, `.md`).
+- **Click on any result** to instantly open the file and jump to the exact line. If the file is already open, it will switch to that tab.
+
+The search runs in the background, so the application will not freeze even when scanning large folders.
+
 ---
 
 ## Troubleshooting
@@ -306,6 +326,14 @@ This clears stale tray icon state left behind by crashed sessions.
 
 ### Toast shows "`Python`" instead of "`coding-pudding`"
 This only happens when running from source code (python.exe). The official coding-pudding.exe from **Releases** will fix this problem.
+
+### Antivirus false positive
+Some antivirus engines (Bkav Pro, Zillya, SecureAge) may flag `coding-pudding.exe` as malware. This is a **false positive** caused by PyInstaller's self-extracting bootloader.
+
+- The source code is open (GPL v3.0), and almost every engines on VirusTotal report it as clean.
+- **If your antiviruses flags the file**:
+  1. Add an exception/exclusion for `coding-pudding.exe`.
+  2. Or download from GitHub Releases and verify the hash.
 
 ---
 
