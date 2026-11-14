@@ -153,7 +153,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Shift + F2` or `Shift + Fn + F2` | Jump to the previous bookmark |
 | `Ctrl + Shift + B` | Open `Bookmarks` dialog |
 | `Ctrl + Shift + F` | Search in Files |
-| `Ctrl + `` | Terminal |
+| `Ctrl + ~` | Terminal |
 
 ---
 
