@@ -37,6 +37,11 @@
   <img src="screenshots/terminal.PNG" width="45%" />
 </p>
 
+<p align="center">
+  <img src="screenshots/todo_fixme.PNG" width="45%" />
+  <img src="screenshots/todo_fixme_dialog.PNG" width="45%" />
+</p>
+
 ---
 
 ## Features
@@ -70,7 +75,8 @@
 - **Open Recent files** — `File` → `Open Recent` to show the 10 most recently opened files.
 - **Tab elide** — Long file names are elided in the middle; tabs don't stretch.
 - **Convert indentation** — Convert leading whitespace between tabs and spaces.
-- **Integrated Terminal** — Built-in terminal with command history (Up/Down arrows). Smart layout with 80/20 split.
+- **Integrated Terminal** — Built-in terminal with command history (Up/Down arrows).
+- **Problems Panel** — Click the error/warning count on the status bar to view a list of all `TODO` and `FIXME` comments, with instant jump-to-line.
 
 ---
 
