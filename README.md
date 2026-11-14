@@ -34,6 +34,7 @@
 
 <p align="center">
   <img src="screenshots/notification.PNG" width="45%" />
+  <img src="screenshots/terminal.PNG" width="45%" />
 </p>
 
 ---
@@ -69,6 +70,7 @@
 - **Open Recent files** — `File` → `Open Recent` to show the 10 most recently opened files.
 - **Tab elide** — Long file names are elided in the middle; tabs don't stretch.
 - **Convert indentation** — Convert leading whitespace between tabs and spaces.
+- **Integrated Terminal** — Built-in terminal with command history (Up/Down arrows). Smart layout with 80/20 split.
 
 ---
 
@@ -151,6 +153,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Shift + F2` or `Shift + Fn + F2` | Jump to the previous bookmark |
 | `Ctrl + Shift + B` | Open `Bookmarks` dialog |
 | `Ctrl + Shift + F` | Search in Files |
+| `Ctrl + `` | Terminal |
 
 ---
 
@@ -331,7 +334,7 @@ This only happens when running from source code (python.exe). The official codin
 Some antivirus engines (Bkav Pro, Zillya, SecureAge) may flag `coding-pudding.exe` as malware. This is a **false positive** caused by PyInstaller's self-extracting bootloader.
 
 - The source code is open (GPL v3.0), and almost every engines on VirusTotal report it as clean.
-- **If your antiviruses flags the file**:
+- **If your antivirus flags the file**:
   1. Add an exception/exclusion for `coding-pudding.exe`.
   2. Or download from GitHub Releases and verify the hash.
 
