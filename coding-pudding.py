@@ -18,8 +18,9 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QPlainTextEdit,
                              QListWidgetItem, QAbstractItemView, QTabWidget,
                              QSpinBox, QComboBox, QInputDialog, QTableWidget,
                              QTableWidgetItem, QHeaderView, QTextEdit,
-                             QGraphicsOpacityEffect)
-from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QSettings, QPropertyAnimation, QThread, pyqtSignal
+                             QGraphicsOpacityEffect, QSplitter, QScrollBar)
+from PyQt6.QtCore import (Qt, QTimer, QRect, QPoint, QSettings, QPropertyAnimation,
+                          QThread, pyqtSignal, QProcess, QEasingCurve)
 from PyQt6.QtGui import (QFont, QColor, QTextCursor, QKeySequence, QIcon,
                          QTextDocument, QPainter, QTextFormat, QCursor,
                          QTextCharFormat, QFontDatabase, QAction, QPen,
@@ -433,10 +434,9 @@ class SearchThread(QThread):
             else:
                 pattern = re.compile(re.escape(self.keyword), flags)
 
-        # 2. Quét từng file
         for i, filepath in enumerate(all_files):
             self.progress_updated.emit(i + 1, total_files)
-            
+
             try:
                 with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                     for line_num, line in enumerate(f, 1):
@@ -620,6 +620,50 @@ class AutoScrollAnchor(QWidget):
         else:
             painter.drawEllipse(center_x - 4, center_y - 4, 8, 8)
 
+# ============================================================
+# FADING SCROLLBAR
+# ============================================================
+
+class FadeScrollBar(QScrollBar):
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.opacity_effect.setOpacity(1.0)
+
+        self.fade_anim = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.fade_anim.setDuration(500)
+        self.fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+        self.fade_timer = QTimer(self)
+        self.fade_timer.setSingleShot(True)
+        self.fade_timer.setInterval(2000)
+        self.fade_timer.timeout.connect(self._fade_out)
+
+        self.valueChanged.connect(self._fade_in)
+        self.sliderPressed.connect(self._fade_in)
+
+    def _fade_in(self):
+        self.fade_timer.stop()
+        self.fade_anim.stop()
+        self.fade_anim.setEndValue(1.0)
+        self.fade_anim.start()
+        self.fade_timer.start()
+
+    def _fade_out(self):
+        self.fade_anim.stop()
+        self.fade_anim.setEndValue(0.0)
+        self.fade_anim.start()
+
+    def enterEvent(self, event):
+        self._fade_in()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if not self.fade_timer.isActive():
+            self.fade_timer.start()
+        super().leaveEvent(event)
 
 # ============================================================
 # CODE EDITOR (QPlainTextEdit)
@@ -649,6 +693,9 @@ class CodeEditor(QPlainTextEdit):
 
         self.setTabChangesFocus(False)
 
+        self.setVerticalScrollBar(FadeScrollBar(Qt.Orientation.Vertical, self))
+        self.setHorizontalScrollBar(FadeScrollBar(Qt.Orientation.Horizontal, self))
+
         self.auto_scroll_active = False
         self.auto_scroll_anchor = None
         self.auto_scroll_timer = QTimer()
@@ -669,14 +716,12 @@ class CodeEditor(QPlainTextEdit):
         self.highlight_current_line()
 
     def update_line_number_area_width(self):
-        digits = 1
         max_num = max(1, self.blockCount())
-        while max_num >= 10:
-            max_num //= 10
-            digits += 1
 
-        width = 10 + self.fontMetrics().horizontalAdvance('9') * digits
-        width = max(width, 50)
+        text_width = self.fontMetrics().horizontalAdvance(str(max_num))
+
+        width = text_width + 14
+
         self.setViewportMargins(width, 0, 0, 0)
         self.line_number_area.setFixedWidth(width)
 
@@ -1043,9 +1088,9 @@ class CodeEditor(QPlainTextEdit):
         """Remove trailing spaces without resetting the cursor"""
         cursor = self.textCursor()
         original_pos = cursor.position()
-        
+
         cursor.beginEditBlock()
-        
+
         doc = self.document()
         block = doc.begin()
         changed = False
@@ -1053,19 +1098,19 @@ class CodeEditor(QPlainTextEdit):
         while block.isValid():
             text = block.text()
             stripped = text.rstrip()
-            
+
             if text != stripped:
                 start_pos = block.position() + len(stripped)
                 end_pos = block.position() + len(text)
-                
+
                 trim_cursor = QTextCursor(doc)
                 trim_cursor.setPosition(start_pos)
                 trim_cursor.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
                 trim_cursor.removeSelectedText()
                 changed = True
-                
+
             block = block.next()
-            
+
         cursor.endEditBlock()
 
         # Khôi phục lại vị trí con trỏ ban đầu
@@ -1074,7 +1119,7 @@ class CodeEditor(QPlainTextEdit):
             new_pos = min(original_pos, doc_length)
             cursor.setPosition(new_pos)
             self.setTextCursor(cursor)
-            
+
         return changed
 
     def get_word_count(self):
@@ -1549,6 +1594,7 @@ class CodeEditor(QPlainTextEdit):
 
         font_metrics = painter.fontMetrics()
         line_height = self.blockBoundingRect(block).height()
+        area_width = self.line_number_area.width()
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
@@ -1556,13 +1602,17 @@ class CodeEditor(QPlainTextEdit):
                 has_bookmark = line_num in self.bookmarks
 
                 if has_bookmark:
+                    icon_width = max(int((self.fontMetrics().height() - 2) * 0.7), 6)
+                    icon_x = (area_width - icon_width) // 2
                     icon_y = int(top + (line_height - (self.fontMetrics().height() - 2)) / 2)
-                    self._draw_bookmark_icon(painter, 5, icon_y)
+                    self._draw_bookmark_icon(painter, icon_x, icon_y)
                 else:
                     number = str(line_num)
                     text_y = int(top + (self.fontMetrics().height() - font_metrics.height()) / 2 + font_metrics.ascent())
                     painter.setPen(self.line_number_fg)
-                    painter.drawText(5, text_y, number)
+
+                    rect = QRect(0, text_y - font_metrics.ascent(), area_width, font_metrics.height())
+                    painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, number)
 
             block = block.next()
             top = bottom
@@ -2167,6 +2217,209 @@ class SettingsDialog(QDialog):
         super().reject()
 
 # ============================================================
+# v11.0: TERMINAL WIDGET (Strict CMD-like)
+# ============================================================
+class TerminalWidget(QWidget):
+    def __init__(self, parent=None, dark_mode=False):
+        super().__init__(parent)
+        self.dark_mode = dark_mode
+        self.current_directory = os.getcwd()
+
+        # v11.0: Commands history
+        self.history = []
+        self.history_index = 0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.output_area = QPlainTextEdit()
+        self.output_area.setReadOnly(True)
+
+        self.output_area.setVerticalScrollBar(FadeScrollBar(Qt.Orientation.Vertical, self.output_area))
+        self.output_area.setHorizontalScrollBar(FadeScrollBar(Qt.Orientation.Horizontal, self.output_area))
+
+        self.output_area.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.output_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self.input_area = QLineEdit()
+        self.input_area.returnPressed.connect(self._execute_command)
+        self.input_area.installEventFilter(self)
+
+        self.input_area.setCursorPosition(0)
+
+        self.input_area.setStyleSheet("""
+            QLineEdit {
+                background-color: #0c0c0c;
+                color: #cccccc;
+                border: none;
+                selection-background-color: #cccccc;
+                selection-color: #0c0c0c;
+            }
+        """)
+
+        self.prompt_label = QLabel()
+
+        input_layout = QHBoxLayout()
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setSpacing(0)
+        input_layout.addWidget(self.prompt_label)
+        input_layout.addWidget(self.input_area)
+
+        layout.addWidget(self.output_area)
+        layout.addLayout(input_layout)
+
+        self._apply_theme()
+
+        self.process = QProcess(self)
+        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.process.readyReadStandardOutput.connect(self._read_output)
+        self.process.finished.connect(self._process_finished)
+
+        self._update_prompt()
+
+        self.output_area.verticalScrollBar().setValue(0)
+
+        cursor = self.output_area.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        self.output_area.setTextCursor(cursor)
+        self.output_area.ensureCursorVisible()
+
+    def eventFilter(self, obj, event):
+        if obj == self.input_area and event.type() == event.Type.KeyPress:
+            key = event.key()
+
+            if key == Qt.Key.Key_Up:
+                if self.history and self.history_index > 0:
+                    self.history_index -= 1
+                    self.input_area.setText(self.history[self.history_index])
+                    self.input_area.setCursorPosition(len(self.input_area.text()))
+                return True
+
+            elif key == Qt.Key.Key_Down:
+                if self.history and self.history_index < len(self.history) - 1:
+                    self.history_index += 1
+                    self.input_area.setText(self.history[self.history_index])
+                    self.input_area.setCursorPosition(len(self.input_area.text()))
+                elif self.history and self.history_index >= len(self.history) - 1:
+                    self.history_index = len(self.history)
+                    self.input_area.clear()
+                return True
+
+        return super().eventFilter(obj, event)
+
+    def _apply_theme(self):
+        font = QFont("Consolas", 11)
+        radius = "10px"
+
+        if self.dark_mode:
+            bg = "#2d2d2d"
+            fg = "#e0e0e0"
+        else:
+            bg = "#d4d4d4"
+            fg = "#1a1a1a"
+
+        self.output_area.setFont(font)
+        self.output_area.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background-color: {bg};
+                color: {fg};
+                border-top-left-radius: {radius};
+                border-top-right-radius: {radius};
+                border: none;
+                padding: 4px;
+                padding-right: 12px;
+            }}
+        """)
+
+        self.input_area.setFont(font)
+        self.input_area.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {bg};
+                color: {fg};
+                border-bottom-right-radius: {radius};
+                border: none;
+                padding: 4px;
+            }}
+        """)
+
+        self.prompt_label.setFont(font)
+        self.prompt_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg};
+                color: {fg};
+                border-bottom-left-radius: {radius};
+                padding-left: 6px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+            }}
+        """)
+
+        self.setStyleSheet("""
+            TerminalWidget {
+                background-color: transparent;
+            }
+        """)
+
+    def toggle_theme(self, dark_mode):
+        self.dark_mode = dark_mode
+        self._apply_theme()
+
+    def _update_prompt(self):
+        self.prompt_label.setText(f"{self.current_directory}> ")
+        self.output_area.verticalScrollBar().setValue(0)
+        self.input_area.setFocus()
+
+    def _execute_command(self):
+        cmd = self.input_area.text().strip()
+        if not cmd:
+            return
+
+        if not self.history or self.history[-1] != cmd:
+            self.history.append(cmd)
+        self.history_index = len(self.history)
+
+        self.output_area.appendPlainText(f"{self.prompt_label.text()}{cmd}")
+        self.input_area.clear()
+
+        if cmd.lower() == "cls":
+            self.output_area.clear()
+            return
+
+        elif cmd.lower() == "cd":
+            self.current_directory = os.getcwd()
+            self._update_prompt()
+            return
+        elif cmd.lower().startswith("cd "):
+            target = cmd[3:].strip()
+            new_dir = os.path.abspath(os.path.join(self.current_directory, target))
+            if os.path.isdir(new_dir):
+                self.current_directory = new_dir
+                self._update_prompt()
+            else:
+                self.output_area.appendPlainText("The system cannot find the path specified.")
+            return
+
+        self.input_area.setEnabled(False)
+        self.process.setWorkingDirectory(self.current_directory)
+        self.process.start("cmd.exe", ["/c", cmd])
+
+    def _read_output(self):
+        data = self.process.readAllStandardOutput().data().decode('utf-8', errors='replace')
+        data = data.replace('\r\n', '\n').replace('\n', '\r\n')
+
+        if not hasattr(self, 'is_first_output') or self.is_first_output:
+            self.output_area.insertPlainText("\r\n")
+            self.is_first_output = False
+
+        self.output_area.insertPlainText(data)
+        self.output_area.verticalScrollBar().setValue(self.output_area.verticalScrollBar().maximum())
+
+    def _process_finished(self):
+        self.input_area.setEnabled(True)
+        self.input_area.setFocus()
+
+# ============================================================
 # MAIN NOTEPAD
 # ============================================================
 
@@ -2202,15 +2455,34 @@ class MyNotepad(QMainWindow):
 
         self.tabs = []
 
-        # v6.0: Toast fallback
         self._current_toast = None
+
+        self.current_todo_list = []
+        self.current_fixme_list = []
 
         self.dragging_tab = False
         self.drag_start_pos = None
         self.drag_tab_index = -1
 
         self.tab_widget = CustomTabWidget(self)
-        self.setCentralWidget(self.tab_widget)
+
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.setHandleWidth(6)
+        self.splitter.setStyleSheet("QSplitter::handle { background-color: transparent; }")
+
+        self.splitter.addWidget(self.tab_widget)
+
+        self.terminal = TerminalWidget(self, self.dark_mode)
+        self.terminal.hide()
+        self.splitter.addWidget(self.terminal)
+
+        self.splitter.setSizes([800, 150])
+
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+
+        self.setCentralWidget(self.splitter)
+
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
         self.tab_widget.tabBar().installEventFilter(self)
         self.tab_widget.tabBar().setMouseTracking(True)
@@ -2689,6 +2961,8 @@ class MyNotepad(QMainWindow):
             # v9.0: Refresh labels when switching tab
             self._update_encoding_label()
             self._update_line_ending_label()
+            # v12.0: Scanning for errors after switching tab
+            self._update_diagnostics()
 
     def update_tab_title(self, index=None):
         if index is None:
@@ -2822,6 +3096,15 @@ class MyNotepad(QMainWindow):
         """Reset debounce timer once per press"""
         if self.auto_save_enabled:
             self.auto_save_debounce.start()
+
+        # v12.0: Scanning for errors after 1 second (stop typing)
+        if not hasattr(self, 'diag_timer'):
+            self.diag_timer = QTimer()
+            self.diag_timer.setSingleShot(True)
+            self.diag_timer.setInterval(1000)
+            self.diag_timer.timeout.connect(self._update_diagnostics)
+        
+        self.diag_timer.start()
 
     def changeEvent(self, event):
         """Auto-save when the window is out of focus mode"""
@@ -3602,6 +3885,47 @@ class MyNotepad(QMainWindow):
         # v7.0: Reset auto-save debounce
         self._on_editor_text_changed()
 
+    def _update_diagnostics(self):
+        tab = self.current_tab()
+        if not tab or not tab.editor:
+            return
+
+        text = tab.editor.toPlainText()
+        lines = text.split('\n')
+        
+        self.current_todo_list = []
+        self.current_fixme_list = []
+        
+        errors = 0
+        warnings = 0
+
+        for i, line in enumerate(lines):
+            line_num = i + 1
+            
+            # TODO
+            if "TODO" in line:
+                self.current_todo_list.append({'line': line_num, 'content': line.strip()})
+                warnings += 1
+                
+            # FIXME
+            if "FIXME" in line:
+                self.current_fixme_list.append({'line': line_num, 'content': line.strip()})
+                errors += 1
+
+            if line.startswith(' \t') or line.startswith('\t '):
+                errors += 1
+
+        self.error_label.setText(f"✖ {errors}")
+        self.warning_label.setText(f"⚠ {warnings}")
+
+    def _show_problems_dialog(self, event):
+        if not self.current_todo_list and not self.current_fixme_list:
+            QMessageBox.information(self, "Problems", "No TODO or FIXME found.")
+            return
+            
+        dialog = ProblemsDialog(self, self.current_todo_list, self.current_fixme_list, self.current_editor())
+        dialog.exec()
+
     def update_title(self):
         base_title = "coding-pudding.exe"
         tab = self.current_tab()
@@ -3736,7 +4060,12 @@ class MyNotepad(QMainWindow):
                 QGroupBox { color: #d4d4d4; border: 1px solid #4d4d4d; margin-top: 8px; }
                 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
                 QRadioButton { color: #d4d4d4; }
-                QTabWidget::pane { border: none; background-color: #1e1e1e; }
+                QTabWidget::pane {
+                    border: none;
+                    background-color: #1e1e1e;
+                    border-radius: 8px;
+                    margin: 4px;
+                }
                 QTabBar::tab { background-color: #2d2d2d; color: #d4d4d4; padding: 6px 12px; border: 1px solid #3d3d3d; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
                 QTabBar::tab:selected { background-color: #1e1e1e; color: white; }
                 QTabBar::tab:hover { background-color: #3d3d3d; }
@@ -3747,6 +4076,44 @@ class MyNotepad(QMainWindow):
                 QTableWidget::item { padding: 4px; }
                 QTableWidget::item:selected { background-color: #3d3d3d; color: white; }
                 QHeaderView::section { background-color: #3d3d3d; color: #d4d4d4; padding: 5px; border: 1px solid #4d4d4d; }
+                QScrollBar:vertical {
+                    border: none;
+                    background: transparent;
+                    width: 8px;
+                    margin: 0px 0px 0px 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background: rgba(160, 160, 160, 0.4);
+                    min-height: 30px;
+                    border-radius: 4px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background: rgba(160, 160, 160, 0.8);
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                    background: none;
+                    height: 0px;
+                }
+                QScrollBar:horizontal {
+                    border: none;
+                    background: transparent;
+                    height: 8px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:horizontal {
+                    background: rgba(160, 160, 160, 0.4);
+                    min-width: 30px;
+                    border-radius: 4px;
+                }
+                QScrollBar::handle:horizontal:hover {
+                    background: rgba(160, 160, 160, 0.8);
+                }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
+                QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                    background: none;
+                    width: 0px;
+                }
             """)
         else:
             self.setStyleSheet("""
@@ -3766,7 +4133,12 @@ class MyNotepad(QMainWindow):
                 QGroupBox { color: black; border: 1px solid #ccc; margin-top: 8px; }
                 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
                 QRadioButton { color: black; }
-                QTabWidget::pane { border: none; background-color: white; }
+                QTabWidget::pane {
+                    border: none;
+                    background-color: white;
+                    border-radius: 8px;
+                    margin: 4px;
+                }
                 QTabBar::tab { background-color: #e0e0e0; color: black; padding: 6px 12px; border: 1px solid #ccc; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
                 QTabBar::tab:selected { background-color: white; color: black; }
                 QTabBar::tab:hover { background-color: #f0f0f0; }
@@ -3777,6 +4149,14 @@ class MyNotepad(QMainWindow):
                 QTableWidget::item { padding: 4px; }
                 QTableWidget::item:selected { background-color: #0078d4; color: white; }
                 QHeaderView::section { background-color: #f0f0f0; color: black; padding: 5px; border: 1px solid #ccc; }
+                QScrollBar:vertical { border: none; background: transparent; width: 8px; margin: 0px; }
+                QScrollBar::handle:vertical { background: rgba(0, 0, 0, 0.2); min-height: 30px; border-radius: 4px; }
+                QScrollBar::handle:vertical:hover { background: rgba(0, 0, 0, 0.5); }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; height: 0px; }
+                QScrollBar:horizontal { border: none; background: transparent; height: 8px; margin: 0px; }
+                QScrollBar::handle:horizontal { background: rgba(0, 0, 0, 0.2); min-width: 30px; border-radius: 4px; }
+                QScrollBar::handle:horizontal:hover { background: rgba(0, 0, 0, 0.5); }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal, QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; width: 0px; }
             """)
         self.update_status_bar_style()
 
@@ -3813,6 +4193,18 @@ class MyNotepad(QMainWindow):
         self.line_ending_label = QLabel("Windows (CRLF)")
         self.line_ending_label.setStyleSheet("padding: 0px 15px;")
         self.status_bar.addPermanentWidget(self.line_ending_label)
+
+        self.error_label = QLabel("✖ 0")
+        self.error_label.setStyleSheet("padding: 0px 15px; color: #d13438; font-weight: bold;")
+        self.error_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.error_label.mousePressEvent = self._show_problems_dialog
+        self.status_bar.addPermanentWidget(self.error_label)
+
+        self.warning_label = QLabel("⚠ 0")
+        self.warning_label.setStyleSheet("padding: 0px 15px; color: #ff8c00; font-weight: bold;")
+        self.warning_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.warning_label.mousePressEvent = self._show_problems_dialog
+        self.status_bar.addPermanentWidget(self.warning_label)
 
         self.update_status_bar_style()
 
@@ -4038,6 +4430,12 @@ class MyNotepad(QMainWindow):
         status_bar_action.triggered.connect(self.toggle_status_bar)
         view_menu.addAction(status_bar_action)
 
+        # v11.0: Toggle Terminal
+        terminal_action = QAction("Toggle Terminal", self)
+        terminal_action.setShortcut("Ctrl+`")
+        terminal_action.triggered.connect(self.toggle_terminal)
+        view_menu.addAction(terminal_action)
+
         word_count_action = QAction("Word Count", self)
         word_count_action.setShortcut("Ctrl+Shift+W")
         word_count_action.triggered.connect(self.show_word_count)
@@ -4198,7 +4596,7 @@ class MyNotepad(QMainWindow):
         QMessageBox.about(self, "About coding-pudding",
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
-            "<p><b>Version:</b> 10.0</p>"
+            "<p><b>Version:</b> 12.0</p>"
             "<p><b>License:</b> GPL v3.0</p>")
 
     def toggle_dark_mode(self, checked):
@@ -4207,6 +4605,7 @@ class MyNotepad(QMainWindow):
             tab.editor.dark_mode = checked
             tab.editor.update_colors()
         self.apply_theme()
+        self.terminal.toggle_theme(checked)
 
     def delete_text(self):
         editor = self.current_editor()
@@ -4255,6 +4654,17 @@ class MyNotepad(QMainWindow):
     def toggle_status_bar(self, checked):
         self.status_bar.setVisible(checked)
 
+    def toggle_terminal(self):
+        if self.terminal.isVisible():
+            self.terminal.hide()
+        else:
+            self.terminal.show()
+            total_height = self.splitter.height()
+            code_height = int(total_height * 0.8)
+            term_height = total_height - code_height
+            self.splitter.setSizes([code_height, term_height])
+            self.terminal.input_area.setFocus()
+
     def show_find_dialog(self):
         editor = self.current_editor()
         if editor:
@@ -4278,9 +4688,9 @@ class MyNotepad(QMainWindow):
         default_folder = None
         if current_tab and current_tab.file_path:
             default_folder = os.path.dirname(current_tab.file_path)
-        
+
         input_dialog = SearchInFilesInputDialog(self, default_folder)
-        
+
         if input_dialog.exec() == QDialog.DialogCode.Accepted:
             params = input_dialog.search_params
             results_dialog = SearchInFilesResultsDialog(self, params)
@@ -4288,7 +4698,7 @@ class MyNotepad(QMainWindow):
 
     def open_file_at_line(self, file_path, line_num):
         normalized_path = os.path.normcase(os.path.abspath(file_path))
-        
+
         for i, tab in enumerate(self.tabs):
             if tab.file_path:
                 tab_path = os.path.normcase(os.path.abspath(tab.file_path))
@@ -4296,16 +4706,16 @@ class MyNotepad(QMainWindow):
                     self.tab_widget.setCurrentIndex(i)
                     tab.editor._goto_line(line_num)
                     return
-                    
+
         if not os.path.isfile(file_path):
             QMessageBox.warning(self, "File Not Found", f"File no longer exists:\n{file_path}")
             return
-            
+
         try:
             encoding = self._detect_encoding(file_path)
             with open(file_path, 'r', encoding=encoding) as f:
                 content = f.read()
-                
+
             tab = self.add_new_tab(file_path, content, encoding=encoding)
             self.apply_font()
             tab.editor._goto_line(line_num)
@@ -4454,30 +4864,30 @@ class SearchInFilesInputDialog(QDialog):
         self.setWindowTitle("Search in Files")
         self.setFixedSize(500, 220)
         self.setModal(True)
-        
+
         self.search_params = None
-        
+
         layout = QVBoxLayout()
         layout.setSpacing(10)
-        
+
         find_row = QHBoxLayout()
         find_row.addWidget(QLabel("Find what:"))
         self.find_input = QLineEdit()
         find_row.addWidget(self.find_input)
         layout.addLayout(find_row)
-        
+
         folder_row = QHBoxLayout()
         folder_row.addWidget(QLabel("Folder:"))
         self.folder_input = QLineEdit()
         if initial_folder:
             self.folder_input.setText(initial_folder)
         folder_row.addWidget(self.folder_input)
-        
+
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self._browse_folder)
         folder_row.addWidget(browse_btn)
         layout.addLayout(folder_row)
-        
+
         options_row = QHBoxLayout()
         self.case_check = QCheckBox("Match case")
         self.word_check = QCheckBox("Whole word")
@@ -4487,45 +4897,45 @@ class SearchInFilesInputDialog(QDialog):
         options_row.addWidget(self.regex_check)
         options_row.addStretch()
         layout.addLayout(options_row)
-        
+
         layout.addStretch()
-        
+
         button_row = QHBoxLayout()
         button_row.addStretch()
-        
+
         search_btn = QPushButton("Search")
         search_btn.setDefault(True)
         search_btn.clicked.connect(self._on_search_clicked)
         button_row.addWidget(search_btn)
-        
+
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
         button_row.addWidget(cancel_btn)
-        
+
         layout.addLayout(button_row)
         self.setLayout(layout)
-        
+
         self.find_input.setFocus()
-    
+
     def _browse_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self, "Choose folder", self.folder_input.text()
         )
         if folder:
             self.folder_input.setText(folder)
-    
+
     def _on_search_clicked(self):
         keyword = self.find_input.text().strip()
         folder = self.folder_input.text().strip()
-        
+
         if not keyword:
             QMessageBox.warning(self, "Search", "Please enter a keyword.")
             return
-        
+
         if not os.path.isdir(folder):
             QMessageBox.warning(self, "Search", "Please choose a valid folder.")
             return
-        
+
         # Lưu params để Dialog 2 sử dụng
         self.search_params = {
             'keyword': keyword,
@@ -4546,17 +4956,17 @@ class SearchInFilesResultsDialog(QDialog):
         self.search_params = search_params
         self.results = []
         self.filtered_results = []
-        
+
         self.setWindowTitle(f'Search Results — "{search_params["keyword"]}"')
         self.setFixedSize(850, 550)
         self.setModal(False)
-        
+
         layout = QVBoxLayout()
         layout.setSpacing(10)
-        
+
         info_label = QLabel(f'Searching in: <code>{search_params["folder"]}</code>')
         layout.addWidget(info_label)
-        
+
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel("Sort by:"))
         self.sort_combo = QComboBox()
@@ -4564,7 +4974,7 @@ class SearchInFilesResultsDialog(QDialog):
         self.sort_combo.addItem("Time (Newest first)", "time")
         self.sort_combo.currentIndexChanged.connect(self._apply_filter)
         filter_row.addWidget(self.sort_combo)
-        
+
         filter_row.addWidget(QLabel("Type:"))
         self.type_combo = QComboBox()
         self.type_combo.addItem("All", "all")
@@ -4572,10 +4982,10 @@ class SearchInFilesResultsDialog(QDialog):
             self.type_combo.addItem(ext, ext)
         self.type_combo.currentIndexChanged.connect(self._apply_filter)
         filter_row.addWidget(self.type_combo)
-        
+
         filter_row.addStretch()
         layout.addLayout(filter_row)
-        
+
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["#", "File", "Line", "Content"])
@@ -4584,10 +4994,10 @@ class SearchInFilesResultsDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
-        
+
         self.table.cellClicked.connect(self._on_row_clicked)
         self.table.doubleClicked.connect(self._on_row_double_clicked)
-        
+
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
@@ -4596,24 +5006,24 @@ class SearchInFilesResultsDialog(QDialog):
         self.table.setColumnWidth(0, 40)
         self.table.setColumnWidth(1, 200)
         self.table.setColumnWidth(2, 60)
-        
+
         layout.addWidget(self.table)
-        
+
         self.summary_label = QLabel("Searching...")
         self.summary_label.setStyleSheet("font-weight: bold; color: #0078d4;")
         layout.addWidget(self.summary_label)
-        
+
         button_row = QHBoxLayout()
         button_row.addStretch()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
         button_row.addWidget(close_btn)
         layout.addLayout(button_row)
-        
+
         self.setLayout(layout)
-        
+
         self._start_search()
-    
+
     def _start_search(self):
         self.search_thread = SearchThread(
             folder=self.search_params['folder'],
@@ -4625,14 +5035,14 @@ class SearchInFilesResultsDialog(QDialog):
         self.search_thread.progress_updated.connect(self._on_progress)
         self.search_thread.result_found.connect(self._on_search_finished)
         self.search_thread.start()
-    
+
     def _on_progress(self, current, total):
         self.summary_label.setText(f"Searching... {current}/{total} files")
-    
+
     def _on_search_finished(self, results):
         self.results = results
         self._apply_filter()
-    
+
     def _apply_filter(self):
         if not self.results:
             self.summary_label.setText("No results found.")
@@ -4640,60 +5050,140 @@ class SearchInFilesResultsDialog(QDialog):
             return
 
         results = self.results.copy()
-        
+
         # Lọc theo file type
         file_type = self.type_combo.currentData()
         if file_type and file_type != 'all':
             results = [r for r in results if r['file'].lower().endswith(file_type)]
-        
+
         # Sắp xếp
         sort_mode = self.sort_combo.currentData()
         if sort_mode == 'alphabetical':
             results.sort(key=lambda r: (os.path.basename(r['file']).lower(), r['line']))
         elif sort_mode == 'time':
             results.sort(key=lambda r: os.path.getmtime(r['file']), reverse=True)
-        
+
         self.filtered_results = results
         self._refresh_table()
-    
+
     def _refresh_table(self):
         self.table.setRowCount(len(self.filtered_results))
-        
+
         for row, result in enumerate(self.filtered_results):
             item_num = QTableWidgetItem(str(row + 1))
             item_num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, 0, item_num)
-            
+
             item_file = QTableWidgetItem(os.path.basename(result['file']))
             item_file.setToolTip(result['file'])
             self.table.setItem(row, 1, item_file)
-            
+
             item_line = QTableWidgetItem(str(result['line']))
             item_line.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, 2, item_line)
-            
+
             content = result['content']
             if len(content) > 100:
                 content = content[:97] + "..."
             self.table.setItem(row, 3, QTableWidgetItem(content))
-        
+
         num_matches = len(self.filtered_results)
         num_files = len(set(r['file'] for r in self.filtered_results))
         self.summary_label.setText(f"Total: {num_matches} matches in {num_files} files")
-    
+
     def _open_result(self, row):
         if row < 0 or row >= len(self.filtered_results):
             return
         result = self.filtered_results[row]
-        
-        # Gọi hàm thông minh bên MyNotepad để mở file
+
         self.parent_notepad.open_file_at_line(result['file'], result['line'])
-        
+
     def _on_row_clicked(self, row, col):
         self._open_result(row)
-        
+
     def _on_row_double_clicked(self, index):
         self._open_result(index.row())
+        self.close()
+
+# ============================================================
+# v12.0: PROBLEMS DIALOG (TODO & FIXME)
+# ============================================================
+
+class ProblemsDialog(QDialog):
+    def __init__(self, parent_notepad, todo_list, fixme_list, editor):
+        super().__init__(parent_notepad)
+        self.parent_notepad = parent_notepad
+        self.editor = editor
+        
+        self.setWindowTitle("Problems")
+        self.setFixedSize(700, 450)
+        self.setModal(False)
+        
+        layout = QVBoxLayout()
+        
+        self.tabs = QTabWidget()
+        
+        # Tab TODO
+        self.todo_table = self._create_table(todo_list)
+        self.tabs.addTab(self.todo_table, f"TODO ({len(todo_list)})")
+        
+        # Tab FIXME
+        self.fixme_table = self._create_table(fixme_list)
+        self.tabs.addTab(self.fixme_table, f"FIXME ({len(fixme_list)})")
+        
+        layout.addWidget(self.tabs)
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignRight)
+        
+        self.setLayout(layout)
+        
+    def _create_table(self, items):
+        table = QTableWidget()
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(["#", "Line", "Content"])
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        table.setColumnWidth(0, 40)
+        table.setColumnWidth(1, 60)
+        
+        table.setRowCount(len(items))
+        for row, item in enumerate(items):
+            item_num = QTableWidgetItem(str(row + 1))
+            item_num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            table.setItem(row, 0, item_num)
+            
+            item_line = QTableWidgetItem(str(item['line']))
+            item_line.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            table.setItem(row, 1, item_line)
+            
+            content = item['content']
+            if len(content) > 80:
+                content = content[:77] + "..."
+            table.setItem(row, 2, QTableWidgetItem(content))
+            
+        table.cellClicked.connect(self._on_click)
+        table.doubleClicked.connect(self._on_double_click)
+        return table
+        
+    def _on_click(self, row, col):
+        current_table = self.tabs.currentWidget()
+        item = current_table.item(row, 1) # Lấy cột Line
+        if item:
+            line_num = int(item.text())
+            self.editor._goto_line(line_num)
+            
+    def _on_double_click(self, index):
+        self._on_click(index.row(), index.column())
         self.close()
 
 # ============================================================
