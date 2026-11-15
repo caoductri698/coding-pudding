@@ -1,3 +1,4 @@
+import ast
 import sys
 import os
 import re
@@ -666,6 +667,122 @@ class FadeScrollBar(QScrollBar):
         super().leaveEvent(event)
 
 # ============================================================
+# v14.0: STICKY SCROLL (class/def context header)
+# ============================================================
+
+class StickyScrollManager:
+    """
+    Parse Python source with ast, collect class/def scopes,
+    and expose the list of scopes containing a given line.
+    """
+
+    def __init__(self):
+        self._raw_source = ""
+        self._scopes = []          # list of dict: {start, end, kind, name, indent}
+        self._dirty = True
+
+    def invalidate(self):
+        self._dirty = True
+
+    def _parse(self, source):
+        """Parse source and rebuild self._scopes. Never raises."""
+        scopes = []
+        if not source.strip():
+            self._scopes = scopes
+            return
+
+        lines = source.splitlines()
+
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError, MemoryError):
+            # Partial / broken source: try to salvage top-level nodes
+            # by progressively trimming from the end. This is a cheap
+            # fallback so sticky still works while typing.
+            scopes = self._parse_partial(source)
+            self._scopes = scopes
+            return
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                start = node.lineno              # 1-based
+                end = getattr(node, "end_lineno", start)
+                if isinstance(node, ast.ClassDef):
+                    kind = "class"
+                elif isinstance(node, ast.AsyncFunctionDef):
+                    kind = "async def"
+                else:
+                    kind = "def"
+                indent = node.col_offset
+
+                raw_line = lines[start - 1].strip() if 0 <= start - 1 < len(lines) else ""
+
+                scopes.append({
+                    "start": start,
+                    "end": end,
+                    "kind": kind,
+                    "name": node.name,
+                    "indent": indent,
+                    "text": raw_line
+                })
+
+        # Sort by start ascending, then by indent ascending
+        scopes.sort(key=lambda s: (s["start"], s["indent"]))
+        self._scopes = scopes
+
+    def _parse_partial(self, source):
+        """Try parsing source with trailing lines stripped until it works."""
+        lines = source.splitlines()
+        # Try up to 50 different cut points (cheap heuristic)
+        for cut in range(len(lines) - 1, max(0, len(lines) - 50), -1):
+            candidate = "\n".join(lines[:cut])
+            try:
+                tree = ast.parse(candidate)
+            except (SyntaxError, ValueError):
+                continue
+            
+            result = []
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    start = node.lineno
+                    end = getattr(node, "end_lineno", start)
+                    if isinstance(node, ast.ClassDef):
+                        kind = "class"
+                    elif isinstance(node, ast.AsyncFunctionDef):
+                        kind = "async def"
+                    else:
+                        kind = "def"
+                    
+                    raw_line = lines[start - 1].strip() if 0 <= start - 1 < len(lines) else ""
+                    
+                    result.append({
+                        "start": start,
+                        "end": end,
+                        "kind": kind,
+                        "name": node.name,
+                        "indent": node.col_offset,
+                        "text": raw_line,
+                    })
+            result.sort(key=lambda s: (s["start"], s["indent"]))
+            return result
+        return []
+
+    def ensure_parsed(self, source):
+        if self._dirty or source != self._raw_source:
+            self._raw_source = source
+            self._parse(source)
+            self._dirty = False
+
+    def scopes_at(self, line_num):
+        """Return scopes containing line_num, sorted by depth (outer -> inner)."""
+        # Only scopes that started before line_num and end at/after it
+        active = [s for s in self._scopes if s["start"] <= line_num <= s["end"]]
+        # Remove scopes whose parent-child was already collapsed? Keep all.
+        # Sort by start (outer first), then indent (shallower first)
+        active.sort(key=lambda s: (s["start"], s["indent"]))
+        return active
+
+# ============================================================
 # CODE EDITOR (QPlainTextEdit)
 # ============================================================
 
@@ -681,6 +798,16 @@ class CodeEditor(QPlainTextEdit):
 
         self.bookmarks = set()
         self.file_path = file_path
+
+        # ============ v13.0: STICKY SCROLL ============
+        self.sticky = StickyScrollManager()
+        self.sticky_enabled = True
+        self.sticky_height = 0
+
+        self._sticky_timer = QTimer(self)
+        self._sticky_timer.setSingleShot(True)
+        self._sticky_timer.setInterval(400)
+        self._sticky_timer.timeout.connect(self._on_sticky_parse)
 
         font = QFont(self.font_family, self.font_size)
         self.setFont(font)
@@ -714,6 +841,10 @@ class CodeEditor(QPlainTextEdit):
         self.update_line_number_area_width()
         self.update_line_number_area()
         self.highlight_current_line()
+
+        # v13.0: connect text change -> sticky parse
+        self.textChanged.connect(self._on_sticky_text_changed)
+        self._sticky_timer.start()
 
     def update_line_number_area_width(self):
         max_num = max(1, self.blockCount())
@@ -1113,7 +1244,6 @@ class CodeEditor(QPlainTextEdit):
 
         cursor.endEditBlock()
 
-        # Khôi phục lại vị trí con trỏ ban đầu
         if changed:
             doc_length = doc.characterCount() - 1
             new_pos = min(original_pos, doc_length)
@@ -1202,6 +1332,16 @@ class CodeEditor(QPlainTextEdit):
             self.stop_auto_scroll()
             event.accept()
             return
+
+        # v13.0: click on sticky header -> jump to declaration
+        if event.button() == Qt.MouseButton.LeftButton and self.sticky_height > 0:
+            if event.pos().y() < self.sticky_height:
+                line_num = self._sticky_line_at(event.pos().y())
+                if line_num is not None:
+                    self._goto_line(line_num)
+                    event.accept()
+                    return
+
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event):
@@ -1622,12 +1762,185 @@ class CodeEditor(QPlainTextEdit):
     def update_line_number_area(self):
         self.line_number_area.update()
 
+    # ============ v13.0: STICKY SCROLL METHODS ============
+    def _on_sticky_text_changed(self):
+        self.sticky.invalidate()
+        self._sticky_timer.start()
+        self.viewport().update()
+
+    def _on_sticky_parse(self):
+        self.sticky.ensure_parsed(self.toPlainText())
+        self._update_sticky_height()
+        self.viewport().update()
+
+    def _get_sticky_lines(self):
+        if not self.sticky_enabled:
+            return []
+        block = self.firstVisibleBlock()
+        if not block.isValid():
+            return []
+        first_line = block.blockNumber() + 1
+        scopes = self.sticky.scopes_at(first_line)
+        sticky = [s for s in scopes if s["start"] < first_line]
+        return sticky[-5:]
+
+    def _update_sticky_height(self):
+        lines = self._get_sticky_lines()
+        fm = self.fontMetrics()
+        self.sticky_height = len(lines) * (fm.height() + 4) if lines else 0
+        self.viewport().update()
+
+    def _sticky_line_at(self, y):
+        lines = self._get_sticky_lines()
+        if not lines:
+            return None
+        fm = self.fontMetrics()
+        row_h = fm.height() + 4
+        idx = y // row_h
+        if 0 <= idx < len(lines):
+            return lines[idx]["start"]
+        return None
+
+    def _paint_sticky(self, event):
+        """Draw the sticky header on top of the viewport."""
+        lines = self._get_sticky_lines()
+        if not lines:
+            return
+
+        fm = self.fontMetrics()
+        row_h = fm.height() + 4
+        total_h = len(lines) * row_h
+
+        # --- Theme colors ---
+        if self.dark_mode:
+            bg = QColor(37, 37, 38, 255)
+            bg_alt = QColor(45, 45, 48, 255)
+            fg_default = QColor(212, 212, 212)
+            fg_keyword = QColor(86, 156, 214)    # blue
+            fg_name = QColor(220, 220, 170)      # yellow
+            fg_params = QColor(156, 220, 254)    # light cyan
+            sep = QColor(80, 80, 80)
+            guide = QColor(90, 90, 90)
+        else:
+            bg = QColor(240, 240, 240, 255)
+            bg_alt = QColor(228, 228, 228, 255)
+            fg_default = QColor(30, 30, 30)
+            fg_keyword = QColor(0, 0, 200)       # dark blue
+            fg_name = QColor(120, 60, 0)         # brown
+            fg_params = QColor(0, 100, 100)      # teal
+            sep = QColor(200, 200, 200)
+            guide = QColor(180, 180, 180)
+
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(self.font())
+
+        # --- Row backgrounds ---
+        for i in range(len(lines)):
+            rect = QRect(0, i * row_h, self.viewport().width(), row_h)
+            painter.fillRect(rect, bg if i % 2 == 0 else bg_alt)
+
+        # --- Bottom separator ---
+        painter.setPen(QPen(sep, 1))
+        painter.drawLine(0, total_h - 1, self.viewport().width(), total_h - 1)
+
+        # --- Each sticky line ---
+        space_w = fm.horizontalAdvance(' ')
+        for i, s in enumerate(lines):
+            y = i * row_h
+            indent_px = s["indent"] * space_w
+
+            # Vertical guide line
+            painter.fillRect(QRect(indent_px, y, 1, row_h), guide)
+
+            # --- Draw each segment manually with QPainter ---
+            x = indent_px + 4
+            baseline_y = y + fm.ascent() + 2
+
+            # 1. Keyword part ("class " or "def " or "async def ")
+            keyword_str = s["kind"] + " "
+            painter.setPen(fg_keyword)
+            painter.drawText(x, baseline_y, keyword_str)
+            x += fm.horizontalAdvance(keyword_str)
+
+            # 2. Name part
+            name_str = s["name"]
+            painter.setPen(fg_name)
+            painter.drawText(x, baseline_y, name_str)
+            x += fm.horizontalAdvance(name_str)
+
+            rest = s["text"][len(keyword_str) + len(name_str):]
+            if rest:
+                paren_start = rest.find("(")
+                paren_end = rest.rfind(")")
+                
+                if paren_start >= 0 and paren_end > paren_start:
+                    prefix = rest[:paren_start]
+                    if prefix:
+                        painter.setPen(fg_default)
+                        painter.drawText(x, baseline_y, prefix)
+                        x += fm.horizontalAdvance(prefix)
+
+                    params_str = rest[paren_start:paren_end + 1]
+                    painter.setPen(fg_params)
+                    painter.drawText(x, baseline_y, params_str)
+                    x += fm.horizontalAdvance(params_str)
+
+                    suffix = rest[paren_end + 1:]
+                    if suffix:
+                        painter.setPen(fg_default)
+                        painter.drawText(x, baseline_y, suffix)
+                else:
+                    painter.setPen(fg_default)
+                    painter.drawText(x, baseline_y, rest)
+
+        painter.end()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         cr = self.contentsRect()
         self.line_number_area.setGeometry(QRect(cr.left(), cr.top(),
                                                   self.line_number_area.width(),
                                                   cr.height()))
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        self._paint_sticky(event)
+
+    def scrollContentsBy(self, dx, dy):
+        super().scrollContentsBy(dx, dy)
+        self._update_sticky_height()
+
+    def goto_scope_end(self):
+        """
+        Jump to the end of the innermost class/def containing the cursor.
+        Returns True if jumped, False otherwise.
+        """
+        self.sticky.ensure_parsed(self.toPlainText())
+        
+        cursor = self.textCursor()
+        current_line = cursor.blockNumber() + 1
+        
+        scopes = self.sticky.scopes_at(current_line)
+        
+        if not scopes:
+            return False
+            
+        target_scope = max(scopes, key=lambda s: (s["indent"], s["start"]))
+        
+        target_line = target_scope["end"]
+        
+        block = self.document().findBlockByLineNumber(target_line - 1)
+        if not block.isValid():
+            return False
+            
+        new_cursor = QTextCursor(block)
+        new_cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+        self.setTextCursor(new_cursor)
+        
+        self.centerCursor()
+        
+        return True
 
 # ============================================================
 # EDITOR TAB
@@ -2420,6 +2733,49 @@ class TerminalWidget(QWidget):
         self.input_area.setFocus()
 
 # ============================================================
+# v13.0: BOTTOM PANEL (Problems, Output, Terminal)
+# ============================================================
+
+class OutputWidget(QPlainTextEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setFont(QFont("Consolas", 10))
+        self.setStyleSheet("background-color: #1e1e1e; color: #cccccc; border: none;")
+
+    def log(self, message, is_error=False):
+        color = "#f48771" if is_error else "#cccccc"
+        now = datetime.now().strftime("%H:%M:%S")
+        self.appendHtml(f'<span style="color: #858585;">[{now}]</span> <span style="color: {color};">{message}</span>')
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+    def clear_log(self):
+        self.clear()
+
+class BottomPanel(QTabWidget):
+    def __init__(self, parent_notepad, dark_mode=False):
+        super().__init__(parent_notepad)
+        self.parent_notepad = parent_notepad
+        self.setDocumentMode(True)
+        
+        # 1. Tab Output
+        self.output_widget = OutputWidget()
+        self.addTab(self.output_widget, "OUTPUT")
+        
+        # 2. Tab Terminal
+        self.terminal = TerminalWidget(parent_notepad, dark_mode)
+        self.addTab(self.terminal, "TERMINAL")
+
+        # "Clear Log" button
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setFixedSize(60, 22)
+        self.clear_btn.clicked.connect(self.output_widget.clear_log)
+        self.setCornerWidget(self.clear_btn, Qt.Corner.TopRightCorner)
+
+    def toggle_theme(self, dark_mode):
+        self.terminal.toggle_theme(dark_mode)
+
+# ============================================================
 # MAIN NOTEPAD
 # ============================================================
 
@@ -2468,13 +2824,16 @@ class MyNotepad(QMainWindow):
 
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.setHandleWidth(6)
+        self.splitter.setContentsMargins(8, 8, 8, 8)
         self.splitter.setStyleSheet("QSplitter::handle { background-color: transparent; }")
-
+        
         self.splitter.addWidget(self.tab_widget)
-
-        self.terminal = TerminalWidget(self, self.dark_mode)
-        self.terminal.hide()
-        self.splitter.addWidget(self.terminal)
+        
+        self.bottom_panel = BottomPanel(self, self.dark_mode)
+        self.bottom_panel.hide() 
+        self.splitter.addWidget(self.bottom_panel)
+        
+        self.splitter.setSizes([800, 200]) 
 
         self.splitter.setSizes([800, 150])
 
@@ -2834,6 +3193,7 @@ class MyNotepad(QMainWindow):
         if dark_mode:
             self.dark_mode = True
             self.apply_theme()
+            self.bottom_panel.toggle_theme(True)
 
         font_family = settings.value("font_family", "Consolas", type=str)
         font_size = settings.value("font_size", 14, type=int)
@@ -3958,6 +4318,12 @@ class MyNotepad(QMainWindow):
             duration: Showing duration (ms)
             kind: 'info' | 'success' | 'warning' | 'error'
         """
+        # v13.0: Push notification to OUTPUT
+        if hasattr(self, 'bottom_panel'):
+            is_err = (kind == 'error')
+            if "Auto-saved" not in message:
+                self.bottom_panel.output_widget.log(message, is_err)
+
         balloon_kind = kind if kind in ('info', 'warning', 'error') else 'info'
 
         if sys.platform == 'win32':
@@ -4328,6 +4694,11 @@ class MyNotepad(QMainWindow):
         goto_action.triggered.connect(self.show_goto_dialog)
         edit_menu.addAction(goto_action)
 
+        goto_scope_end_action = QAction("Go To End of Scope", self)
+        goto_scope_end_action.setShortcut("Ctrl+Shift+E")
+        goto_scope_end_action.triggered.connect(self.goto_scope_end)
+        edit_menu.addAction(goto_scope_end_action)
+
         edit_menu.addSeparator()
 
         search_files_action = QAction("Search in Files...", self)
@@ -4596,7 +4967,7 @@ class MyNotepad(QMainWindow):
         QMessageBox.about(self, "About coding-pudding",
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
-            "<p><b>Version:</b> 12.0</p>"
+            "<p><b>Version:</b> 13.0</p>"
             "<p><b>License:</b> GPL v3.0</p>")
 
     def toggle_dark_mode(self, checked):
@@ -4605,7 +4976,7 @@ class MyNotepad(QMainWindow):
             tab.editor.dark_mode = checked
             tab.editor.update_colors()
         self.apply_theme()
-        self.terminal.toggle_theme(checked)
+        self.bottom_panel.toggle_theme(checked)
 
     def delete_text(self):
         editor = self.current_editor()
@@ -4655,15 +5026,16 @@ class MyNotepad(QMainWindow):
         self.status_bar.setVisible(checked)
 
     def toggle_terminal(self):
-        if self.terminal.isVisible():
-            self.terminal.hide()
+        if self.bottom_panel.isVisible():
+            self.bottom_panel.hide()
         else:
-            self.terminal.show()
+            self.bottom_panel.show()
+            self.bottom_panel.setCurrentIndex(1)
             total_height = self.splitter.height()
             code_height = int(total_height * 0.8)
             term_height = total_height - code_height
             self.splitter.setSizes([code_height, term_height])
-            self.terminal.input_area.setFocus()
+            self.bottom_panel.terminal.input_area.setFocus()
 
     def show_find_dialog(self):
         editor = self.current_editor()
@@ -4682,6 +5054,12 @@ class MyNotepad(QMainWindow):
         if editor:
             dialog = GotoDialog(editor)
             dialog.exec()
+
+    def goto_scope_end(self):
+        editor = self.current_editor()
+        if isinstance(editor, CodeEditor):
+            if not editor.goto_scope_end():
+                self.status_bar.showMessage("Not inside a class or def", 2000)
 
     def show_search_in_files(self):
         current_tab = self.current_tab()
