@@ -42,6 +42,10 @@
   <img src="screenshots/todo_fixme_dialog.PNG" width="45%" />
 </p>
 
+<p align="center">
+  <img src="screenshots/sticky.PNG" width="45%" />
+</p>
+
 ---
 
 ## Features
