@@ -77,6 +77,8 @@
 - **Convert indentation** — Convert leading whitespace between tabs and spaces.
 - **Integrated Terminal** — Built-in terminal with command history (Up/Down arrows).
 - **Problems Panel** — Click the error/warning count on the status bar to view a list of all `TODO` and `FIXME` comments, with instant jump-to-line.
+- * **Sticky Scroll** — Automatically pins the current `class` / `def` declarations to the top of the editor while scrolling, keeping you in context. Click the header to jump back to the declaration.
+- * **Go to End of Scope** — Instantly jump to the end of the innermost function or class you are currently inside.
 
 ---
 
@@ -160,6 +162,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Ctrl + Shift + B` | Open `Bookmarks` dialog |
 | `Ctrl + Shift + F` | Search in Files |
 | `Ctrl + ~` | Terminal |
+| `Ctrl + Shift + E` | Go To End of Current Scope (class/def) |
 
 ---
 
@@ -320,6 +323,22 @@ A new window will appear with the search results:
 - **Click on any result** to instantly open the file and jump to the exact line. If the file is already open, it will switch to that tab.
 
 The search runs in the background, so the application will not freeze even when scanning large folders.
+
+### Sticky Scroll (Context Header)
+
+When you scroll down through a long Python file, the editor automatically pins the current `class` and `def` declarations to the top of the screen.
+
+  * **Jump back:** Click on any sticky line to instantly jump back to that declaration.
+  * **Color coded:** Keywords (`class`, `def`) are highlighted in blue, names in yellow, and parameters in cyan.
+  * **Smart parsing:** The app uses Python's `ast` module to detect scopes, so it works perfectly even if your code has nested classes or functions.
+  * **Non-intrusive:** If the syntax is broken (e.g., while you're still typing), it uses a fallback parser to salvage the closest valid scopes.
+
+### Go to End of Scope
+
+If you're deep inside a 100-line function and want to jump to the end of it:
+  * Press `Ctrl + Shift + E`.
+  * The cursor jumps to the end of the innermost `class` or `def` you are currently in.
+  * If you are not inside any block, a status bar message will appear.
 
 ---
 
