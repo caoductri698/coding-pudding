@@ -1,4 +1,5 @@
 import ast
+import math
 import sys
 import os
 import re
@@ -19,13 +20,13 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QPlainTextEdit,
                              QListWidgetItem, QAbstractItemView, QTabWidget,
                              QSpinBox, QComboBox, QInputDialog, QTableWidget,
                              QTableWidgetItem, QHeaderView, QTextEdit,
-                             QGraphicsOpacityEffect, QSplitter, QScrollBar)
+                             QGraphicsOpacityEffect, QSplitter, QScrollBar, QColorDialog)
 from PyQt6.QtCore import (Qt, QTimer, QRect, QPoint, QSettings, QPropertyAnimation,
-                          QThread, pyqtSignal, QProcess, QEasingCurve)
+                          QThread, pyqtSignal, QProcess, QEasingCurve, QVariantAnimation)
 from PyQt6.QtGui import (QFont, QColor, QTextCursor, QKeySequence, QIcon,
                          QTextDocument, QPainter, QTextFormat, QCursor,
                          QTextCharFormat, QFontDatabase, QAction, QPen,
-                         QBrush)
+                         QBrush, QPainterPath, QPixmap)
 
 
 def resource_path(relative_path):
@@ -453,115 +454,6 @@ class SearchThread(QThread):
         self.result_found.emit(results)
 
 # ============================================================
-# WINDOWS-STYLE NOTIFICATION (fallback for non-Windows)
-# ============================================================
-
-class WindowsToast(QWidget):
-    """Custom notification - fallback when the OS is not Windows"""
-
-    ICONS = {
-        'info':    ('ⓘ', '#0078d4'),
-        'success': ('✓', '#107c10'),
-        'warning': ('⚠', '#ff8c00'),
-        'error':   ('✕', '#d13438'),
-    }
-
-    def __init__(self, parent, message, duration=5000,
-                 dark_mode=False, kind='info'):
-        super().__init__(parent)
-
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        self.duration = duration
-        self.dark_mode = dark_mode
-
-        if dark_mode:
-            bg = "#2d2d2d"
-            border = "#3d3d3d"
-            text = "#e0e0e0"
-        else:
-            bg = "#f3f3f3"
-            border = "#d0d0d0"
-            text = "#1a1a1a"
-
-        icon_char, accent = self.ICONS.get(kind, self.ICONS['info'])
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(12)
-
-        self.icon_label = QLabel(icon_char)
-        self.icon_label.setFixedSize(28, 28)
-        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.icon_label.setStyleSheet(f"""
-            QLabel {{
-                color: white;
-                background-color: {accent};
-                border-radius: 14px;
-                font-size: 14pt;
-                font-weight: bold;
-            }}
-        """)
-        layout.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignTop)
-
-        self.msg_label = QLabel(message)
-        self.msg_label.setWordWrap(True)
-        self.msg_label.setStyleSheet(f"""
-            QLabel {{
-                color: {text};
-                font-size: 10.5pt;
-                background: transparent;
-            }}
-        """)
-        self.msg_label.setMaximumWidth(320)
-        layout.addWidget(self.msg_label, 1)
-
-        self.setStyleSheet(f"""
-            WindowsToast {{
-                background-color: {bg};
-                border: 1px solid {border};
-                border-left: 4px solid {accent};
-                border-radius: 4px;
-            }}
-        """)
-
-        self.adjustSize()
-
-        self.opacity_effect = QGraphicsOpacityEffect(self)
-        self.opacity_effect.setOpacity(1.0)
-        self.setGraphicsEffect(self.opacity_effect)
-
-        self.fade_anim = QPropertyAnimation(self.opacity_effect, b"opacity")
-        self.fade_anim.setDuration(250)
-        self.fade_anim.finished.connect(self._on_fade_finished)
-        self._closing = False
-
-        self.timer = QTimer(self)
-        self.timer.setSingleShot(True)
-        self.timer.timeout.connect(self.dismiss)
-        self.timer.start(duration)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.dismiss()
-        super().mousePressEvent(event)
-
-    def dismiss(self):
-        if self._closing:
-            return
-        self._closing = True
-        self.timer.stop()
-        self.fade_anim.stop()
-        self.fade_anim.setStartValue(self.opacity_effect.opacity())
-        self.fade_anim.setEndValue(0.0)
-        self.fade_anim.start()
-
-    def _on_fade_finished(self):
-        self.close()
-
-
-# ============================================================
 # LINE NUMBER AREA
 # ============================================================
 
@@ -740,7 +632,7 @@ class StickyScrollManager:
                 tree = ast.parse(candidate)
             except (SyntaxError, ValueError):
                 continue
-            
+
             result = []
             for node in ast.walk(tree):
                 if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -752,9 +644,9 @@ class StickyScrollManager:
                         kind = "async def"
                     else:
                         kind = "def"
-                    
+
                     raw_line = lines[start - 1].strip() if 0 <= start - 1 < len(lines) else ""
-                    
+
                     result.append({
                         "start": start,
                         "end": end,
@@ -845,6 +737,8 @@ class CodeEditor(QPlainTextEdit):
         # v13.0: connect text change -> sticky parse
         self.textChanged.connect(self._on_sticky_text_changed)
         self._sticky_timer.start()
+
+        self.on_key_pressed_callback = None
 
     def update_line_number_area_width(self):
         max_num = max(1, self.blockCount())
@@ -1345,6 +1239,11 @@ class CodeEditor(QPlainTextEdit):
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event):
+        # v14.0: Let the mascot know if there are typed keys
+        if hasattr(self, 'on_key_pressed_callback') and self.on_key_pressed_callback:
+            if event.text() and not event.text().isspace():
+                self.on_key_pressed_callback()
+
         if self.auto_scroll_active:
             self.stop_auto_scroll()
 
@@ -1802,7 +1701,7 @@ class CodeEditor(QPlainTextEdit):
         return None
 
     def _paint_sticky(self, event):
-        """Draw the sticky header on top of the viewport."""
+        """Draw the sticky header on top of the viewport (no line numbers)."""
         lines = self._get_sticky_lines()
         if not lines:
             return
@@ -1869,11 +1768,12 @@ class CodeEditor(QPlainTextEdit):
             painter.drawText(x, baseline_y, name_str)
             x += fm.horizontalAdvance(name_str)
 
+            # 3. Rest (params, ":", etc.)
             rest = s["text"][len(keyword_str) + len(name_str):]
             if rest:
                 paren_start = rest.find("(")
                 paren_end = rest.rfind(")")
-                
+
                 if paren_start >= 0 and paren_end > paren_start:
                     prefix = rest[:paren_start]
                     if prefix:
@@ -1917,29 +1817,29 @@ class CodeEditor(QPlainTextEdit):
         Returns True if jumped, False otherwise.
         """
         self.sticky.ensure_parsed(self.toPlainText())
-        
+
         cursor = self.textCursor()
         current_line = cursor.blockNumber() + 1
-        
+
         scopes = self.sticky.scopes_at(current_line)
-        
+
         if not scopes:
             return False
-            
+
         target_scope = max(scopes, key=lambda s: (s["indent"], s["start"]))
-        
+
         target_line = target_scope["end"]
-        
+
         block = self.document().findBlockByLineNumber(target_line - 1)
         if not block.isValid():
             return False
-            
+
         new_cursor = QTextCursor(block)
         new_cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
         self.setTextCursor(new_cursor)
-        
+
         self.centerCursor()
-        
+
         return True
 
 # ============================================================
@@ -2206,24 +2106,37 @@ class BookmarkListDialog(QDialog):
 # SETTINGS DIALOG
 # ============================================================
 
+# ============================================================
+# SETTINGS DIALOG (v14.0 - Tách 2 tab)
+# ============================================================
+
 class SettingsDialog(QDialog):
     def __init__(self, parent_notepad):
         super().__init__(parent_notepad)
         self.parent_notepad = parent_notepad
         self.setWindowTitle("Settings")
-        self.setFixedSize(500, 650)
+        self.setFixedSize(520, 680)
         self.setModal(True)
 
-        layout = QVBoxLayout()
-        layout.setSpacing(15)
+        main_layout = QVBoxLayout()
 
+        # --- TAB WIDGET ---
+        self.tab_widget = QTabWidget()
+
+        # ==========================================
+        # TAB 1: EDITOR
+        # ==========================================
+        editor_tab = QWidget()
+        editor_layout = QVBoxLayout(editor_tab)
+        editor_layout.setSpacing(15)
+
+        # --- Font Group ---
         editor_group = QGroupBox("Editor")
-        editor_layout = QVBoxLayout()
+        editor_group_layout = QVBoxLayout()
 
         font_row = QHBoxLayout()
         font_row.addWidget(QLabel("Font:"))
         self.font_combo = QComboBox()
-
         CODE_FONTS = [
             "Consolas", "JetBrains Mono", "Fira Code", "Cascadia Code",
             "Source Code Pro", "IBM Plex Mono", "Hack", "Roboto Mono",
@@ -2231,30 +2144,25 @@ class SettingsDialog(QDialog):
             "Anonymous Pro", "Input Mono", "Iosevka", "Monoid",
             "Cascadia Mono", "Courier New",
         ]
-
         available = QFontDatabase.families()
         current_family = parent_notepad.font_family
         added = set()
-
         for font_name in CODE_FONTS:
             if font_name in available:
                 self.font_combo.addItem(font_name)
                 added.add(font_name)
-
         if current_family not in added:
             self.font_combo.addItem(current_family)
-
         idx = self.font_combo.findText(current_family)
         if idx >= 0:
             self.font_combo.setCurrentIndex(idx)
-
         self.font_combo.currentTextChanged.connect(self.update_preview)
         font_row.addWidget(self.font_combo, 1)
-        editor_layout.addLayout(font_row)
+        editor_group_layout.addLayout(font_row)
 
         hint_label = QLabel("Tip: install JetBrains Mono or Fira Code for a better experience")
         hint_label.setStyleSheet("color: gray; font-size: 9pt; font-style: italic;")
-        editor_layout.addWidget(hint_label)
+        editor_group_layout.addWidget(hint_label)
 
         size_row = QHBoxLayout()
         size_row.addWidget(QLabel("Font size:"))
@@ -2265,7 +2173,7 @@ class SettingsDialog(QDialog):
         self.size_spin.valueChanged.connect(self.update_preview)
         size_row.addWidget(self.size_spin)
         size_row.addStretch()
-        editor_layout.addLayout(size_row)
+        editor_group_layout.addLayout(size_row)
 
         tab_row = QHBoxLayout()
         tab_row.addWidget(QLabel("Indentation size:"))
@@ -2274,125 +2182,140 @@ class SettingsDialog(QDialog):
         self.tab_size_combo.addItem("4 spaces", 4)
         self.tab_size_combo.addItem("8 spaces", 8)
         self.tab_size_combo.addItem("Tab character", 0)
-
         for i in range(self.tab_size_combo.count()):
             if self.tab_size_combo.itemData(i) == parent_notepad.indent_size:
                 self.tab_size_combo.setCurrentIndex(i)
                 break
-
         tab_row.addWidget(self.tab_size_combo)
         tab_row.addStretch()
-        editor_layout.addLayout(tab_row)
+        editor_group_layout.addLayout(tab_row)
 
-        editor_layout.addWidget(QLabel("Preview:"))
+        editor_group_layout.addWidget(QLabel("Preview:"))
         self.preview = QLabel("def hello():\n    print(\"Hello, world!\")")
         self.preview.setMinimumHeight(60)
-        editor_layout.addWidget(self.preview)
+        editor_group_layout.addWidget(self.preview)
 
-        editor_group.setLayout(editor_layout)
-        layout.addWidget(editor_group)
+        editor_group.setLayout(editor_group_layout)
+        editor_layout.addWidget(editor_group)
 
+        # --- Appearance Group ---
         appearance_group = QGroupBox("Appearance")
         appearance_layout = QVBoxLayout()
-
         self.light_radio = QRadioButton("Light mode")
         self.dark_radio = QRadioButton("Dark mode")
-
         if parent_notepad.dark_mode:
             self.dark_radio.setChecked(True)
         else:
             self.light_radio.setChecked(True)
-
         self.light_radio.toggled.connect(self.update_preview)
         self.dark_radio.toggled.connect(self.update_preview)
-
         appearance_layout.addWidget(self.light_radio)
         appearance_layout.addWidget(self.dark_radio)
-
         appearance_group.setLayout(appearance_layout)
-        layout.addWidget(appearance_group)
+        editor_layout.addWidget(appearance_group)
 
+        # --- Behavior Group ---
         behavior_group = QGroupBox("Editor behavior")
         behavior_layout = QVBoxLayout()
-
         self.wrap_check = QCheckBox("Word wrap")
         self.wrap_check.setChecked(parent_notepad.word_wrap)
-
         self.linenum_check = QCheckBox("Show line numbers")
         self.linenum_check.setChecked(parent_notepad.show_line_numbers)
-
         self.trim_check = QCheckBox("Trim trailing spaces on save")
         self.trim_check.setChecked(parent_notepad.trim_on_save)
-
         self.restore_tabs_check = QCheckBox("Restore tabs on startup")
         self.restore_tabs_check.setChecked(parent_notepad.restore_tabs)
-
         behavior_layout.addWidget(self.wrap_check)
         behavior_layout.addWidget(self.linenum_check)
         behavior_layout.addWidget(self.trim_check)
         behavior_layout.addWidget(self.restore_tabs_check)
-
         behavior_group.setLayout(behavior_layout)
-        layout.addWidget(behavior_group)
+        editor_layout.addWidget(behavior_group)
 
-        # v7.0: Auto Save group
-        autosave_group = QGroupBox("Auto save")
-        autosave_layout = QVBoxLayout()
+        editor_layout.addStretch()
+        self.tab_widget.addTab(editor_tab, "Editor")
 
-        self.autosave_check = QCheckBox("Enable auto save")
-        self.autosave_check.setChecked(parent_notepad.auto_save_enabled)
-        autosave_layout.addWidget(self.autosave_check)
+        # ==========================================
+        # TAB 2: MASCOT
+        # ==========================================
+        mascot_tab = QWidget()
+        mascot_layout = QVBoxLayout(mascot_tab)
+        mascot_layout.setSpacing(15)
 
-        interval_row = QHBoxLayout()
-        interval_row.addWidget(QLabel("Save every:"))
-        self.autosave_interval_spin = QSpinBox()
-        self.autosave_interval_spin.setRange(5, 600)
-        self.autosave_interval_spin.setSuffix(" seconds")
-        self.autosave_interval_spin.setValue(parent_notepad.auto_save_interval)
-        self.autosave_interval_spin.setEnabled(parent_notepad.auto_save_enabled)
-        interval_row.addWidget(self.autosave_interval_spin)
-        interval_row.addStretch()
-        autosave_layout.addLayout(interval_row)
+        # --- Mascot Appearance ---
+        mascot_group = QGroupBox("Mascot Appearance")
+        m_layout = QVBoxLayout()
 
-        self.autosave_focus_check = QCheckBox("Save when switching tab / losing focus")
-        self.autosave_focus_check.setChecked(parent_notepad.auto_save_on_focus_lost)
-        autosave_layout.addWidget(self.autosave_focus_check)
+        skin_row = QHBoxLayout()
+        skin_row.addWidget(QLabel("Skin (PNG):"))
+        self.skin_path_input = QLineEdit()
+        self.skin_path_input.setReadOnly(True)
+        self.skin_path_input.setText(parent_notepad.mascot_skin_path)
+        skin_row.addWidget(self.skin_path_input)
+        browse_skin_btn = QPushButton("Browse...")
+        browse_skin_btn.clicked.connect(self._browse_skin)
+        skin_row.addWidget(browse_skin_btn)
+        clear_skin_btn = QPushButton("Reset")
+        clear_skin_btn.clicked.connect(self.skin_path_input.clear)
+        skin_row.addWidget(clear_skin_btn)
+        m_layout.addLayout(skin_row)
 
-        autosave_hint = QLabel(
-            "Only files with a path are auto-saved. Unsaved new files are skipped."
-        )
-        autosave_hint.setStyleSheet("color: gray; font-size: 9pt; font-style: italic;")
-        autosave_layout.addWidget(autosave_hint)
+        speed_row = QHBoxLayout()
+        speed_row.addWidget(QLabel("Speed:"))
+        self.speed_combo = QComboBox()
+        self.speed_combo.addItem("Slow", "slow")
+        self.speed_combo.addItem("Medium", "medium")
+        self.speed_combo.addItem("Fast", "fast")
+        idx = self.speed_combo.findData(parent_notepad.mascot_speed)
+        if idx >= 0: self.speed_combo.setCurrentIndex(idx)
+        speed_row.addWidget(self.speed_combo)
+        speed_row.addStretch()
+        m_layout.addLayout(speed_row)
 
-        autosave_group.setLayout(autosave_layout)
-        layout.addWidget(autosave_group)
+        self.count_check = QCheckBox("Count keys when typing")
+        self.count_check.setChecked(parent_notepad.mascot_count_enabled)
+        m_layout.addWidget(self.count_check)
 
-        layout.addStretch()
+        mascot_group.setLayout(m_layout)
+        mascot_layout.addWidget(mascot_group)
 
+        # --- Reminders ---
+        reminder_group = QGroupBox("Idle Reminders")
+        r_layout = QVBoxLayout()
+        r_layout.addWidget(QLabel("Messages to show when idle (one per line):"))
+        self.reminders_edit = QPlainTextEdit()
+        self.reminders_edit.setPlainText("\n".join(parent_notepad.mascot_reminders))
+        self.reminders_edit.setFixedHeight(120)
+        r_layout.addWidget(self.reminders_edit)
+        reminder_group.setLayout(r_layout)
+        mascot_layout.addWidget(reminder_group)
+
+        mascot_layout.addStretch()
+        self.tab_widget.addTab(mascot_tab, "Mascot")
+
+        # --- Add Tab Widget to Main Layout ---
+        main_layout.addWidget(self.tab_widget)
+
+        # --- Buttons ---
         button_row = QHBoxLayout()
-
         reset_btn = QPushButton("Reset to Default")
         reset_btn.clicked.connect(self.reset_defaults)
         button_row.addWidget(reset_btn)
-
         button_row.addStretch()
-
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
         button_row.addWidget(cancel_btn)
-
         ok_btn = QPushButton("OK")
         ok_btn.setDefault(True)
         ok_btn.clicked.connect(self.apply_settings)
         button_row.addWidget(ok_btn)
+        main_layout.addLayout(button_row)
 
-        layout.addLayout(button_row)
+        self.setLayout(main_layout)
 
-        self.setLayout(layout)
-
+        # --- Dirty Tracking ---
         self._dirty = False
         self._suppress_dirty = False
-
         self.font_combo.currentTextChanged.connect(self._mark_dirty)
         self.size_spin.valueChanged.connect(self._mark_dirty)
         self.tab_size_combo.currentIndexChanged.connect(self._mark_dirty)
@@ -2402,14 +2325,19 @@ class SettingsDialog(QDialog):
         self.linenum_check.toggled.connect(self._mark_dirty)
         self.trim_check.toggled.connect(self._mark_dirty)
         self.restore_tabs_check.toggled.connect(self._mark_dirty)
-
-        # v7.0: Auto save connections
-        self.autosave_check.toggled.connect(self._mark_dirty)
-        self.autosave_interval_spin.valueChanged.connect(self._mark_dirty)
-        self.autosave_focus_check.toggled.connect(self._mark_dirty)
-        self.autosave_check.toggled.connect(self.autosave_interval_spin.setEnabled)
+        self.skin_path_input.textChanged.connect(self._mark_dirty)
+        self.speed_combo.currentIndexChanged.connect(self._mark_dirty)
+        self.count_check.toggled.connect(self._mark_dirty)
+        self.reminders_edit.textChanged.connect(self._mark_dirty)
 
         self.update_preview()
+
+    def _browse_skin(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Skin Image", "", "Image Files (*.png *.jpg)"
+        )
+        if file_path:
+            self.skin_path_input.setText(file_path)
 
     def _mark_dirty(self):
         if not self._suppress_dirty:
@@ -2419,7 +2347,6 @@ class SettingsDialog(QDialog):
         font = QFont(self.font_combo.currentText())
         font.setPointSize(self.size_spin.value())
         self.preview.setFont(font)
-
         if self.dark_radio.isChecked():
             self.preview.setStyleSheet(
                 "background-color: #1e1e1e; color: #d4d4d4; "
@@ -2433,34 +2360,32 @@ class SettingsDialog(QDialog):
 
     def reset_defaults(self):
         self._suppress_dirty = True
-
         idx = self.font_combo.findText("Consolas")
-        if idx >= 0:
-            self.font_combo.setCurrentIndex(idx)
+        if idx >= 0: self.font_combo.setCurrentIndex(idx)
         self.size_spin.setValue(14)
-
         for i in range(self.tab_size_combo.count()):
             if self.tab_size_combo.itemData(i) == 4:
                 self.tab_size_combo.setCurrentIndex(i)
                 break
-
         self.light_radio.setChecked(True)
         self.wrap_check.setChecked(False)
         self.linenum_check.setChecked(True)
         self.trim_check.setChecked(False)
         self.restore_tabs_check.setChecked(True)
 
-        # v7.0: Auto save defaults
-        self.autosave_check.setChecked(False)
-        self.autosave_interval_spin.setValue(30)
-        self.autosave_focus_check.setChecked(True)
+        # Mascot defaults
+        self.skin_path_input.clear()
+        idx_speed = self.speed_combo.findData("medium")
+        if idx_speed >= 0: self.speed_combo.setCurrentIndex(idx_speed)
+        self.count_check.setChecked(True)
+        self.reminders_edit.setPlainText("Code đi bro ơi! 😴\nCà phê hết rồi, code tiếp thôi ☕")
 
         self.update_preview()
-
         self._suppress_dirty = False
         self._dirty = True
 
     def apply_settings(self):
+        # --- Editor Settings ---
         self.parent_notepad.font_family = self.font_combo.currentText()
         self.parent_notepad.font_size = self.size_spin.value()
         self.parent_notepad.apply_font()
@@ -2473,13 +2398,6 @@ class SettingsDialog(QDialog):
         self.parent_notepad.show_line_numbers = self.linenum_check.isChecked()
         self.parent_notepad.trim_on_save = self.trim_check.isChecked()
         self.parent_notepad.restore_tabs = self.restore_tabs_check.isChecked()
-
-        # v7.0: Auto save
-        self.parent_notepad.auto_save_enabled = self.autosave_check.isChecked()
-        self.parent_notepad.auto_save_interval = self.autosave_interval_spin.value()
-        self.parent_notepad.auto_save_on_focus_lost = self.autosave_focus_check.isChecked()
-        self.parent_notepad._apply_auto_save_settings()
-
         self.parent_notepad.indent_size = self.tab_size_combo.currentData()
 
         self.parent_notepad.toggle_word_wrap(self.parent_notepad.word_wrap)
@@ -2492,8 +2410,16 @@ class SettingsDialog(QDialog):
                     tab.editor.update_line_number_area_width()
                 else:
                     tab.editor.setViewportMargins(0, 0, 0, 0)
-
                 tab.editor.indent_size = self.parent_notepad.indent_size
+
+        # --- Mascot Settings ---
+        self.parent_notepad.mascot_skin_path = self.skin_path_input.text()
+        self.parent_notepad.mascot_speed = self.speed_combo.currentData()
+        self.parent_notepad.mascot_count_enabled = self.count_check.isChecked()
+        self.parent_notepad.mascot_reminders = [
+            line.strip() for line in self.reminders_edit.toPlainText().splitlines() if line.strip()
+        ]
+        self.parent_notepad.apply_mascot_settings()
 
         self.parent_notepad.save_settings()
         self._dirty = False
@@ -2510,13 +2436,10 @@ class SettingsDialog(QDialog):
                 QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Save
             )
             msg_box.setDefaultButton(QMessageBox.StandardButton.Save)
-
             msg_box.button(QMessageBox.StandardButton.Save).setText("Apply && Close")
             msg_box.button(QMessageBox.StandardButton.Discard).setText("Discard Changes")
             msg_box.button(QMessageBox.StandardButton.Cancel).setText("Keep Editing")
-
             reply = msg_box.exec()
-
             if reply == QMessageBox.StandardButton.Save:
                 self.apply_settings()
                 return
@@ -2526,8 +2449,260 @@ class SettingsDialog(QDialog):
                 return
             else:
                 return
-
         super().reject()
+
+# ============================================================
+# v14.0: PUDDING MASCOT (Interactive Mascot)
+# ============================================================
+
+class PuddingMascot(QWidget):
+    def __init__(self, parent=None, dark_mode=False):
+        super().__init__(parent)
+        self.dark_mode = dark_mode
+        self.setFixedSize(120, 120)
+
+        # --- Config ---
+        self.speed_mode = "medium"
+        self.count_enabled = True
+        self.arm_color = QColor(141, 110, 99)
+        self.custom_reminders = ["Return pleaseee...."]
+
+        # --- State ---
+        self.skin_pixmap = None
+        self.key_count = 0
+        self.state = "idle"
+        self.bounce_offset = 0.0
+        self.left_arm_angle = 0.0
+        self.right_arm_angle = 0.0
+        self.is_blinking = False
+        self._drag_pos = None
+        self._is_dragging = False
+
+        # --- Idle Animation ---
+        self.idle_anim = QVariantAnimation(self)
+        self.idle_anim.setDuration(2000)
+        self.idle_anim.setLoopCount(-1)
+        self.idle_anim.setStartValue(0.0)
+        self.idle_anim.setEndValue(1.0)
+        self.idle_anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self.idle_anim.valueChanged.connect(self._on_idle_tick)
+        self.idle_anim.start()
+
+        # --- Typing Animation ---
+        self.left_anim = QVariantAnimation(self)
+        self.left_anim.setDuration(100)
+        self.left_anim.setStartValue(0.0)
+        self.left_anim.setEndValue(1.0)
+        self.left_anim.valueChanged.connect(self._on_left_arm_tick)
+
+        self.right_anim = QVariantAnimation(self)
+        self.right_anim.setDuration(100)
+        self.right_anim.setStartValue(0.0)
+        self.right_anim.setEndValue(1.0)
+        self.right_anim.valueChanged.connect(self._on_right_arm_tick)
+
+        # --- Blink Timer ---
+        self.blink_timer = QTimer(self)
+        self.blink_timer.setSingleShot(True)
+        self.blink_timer.timeout.connect(self._stop_blink)
+
+        self.random_blink_timer = QTimer(self)
+        self.random_blink_timer.setInterval(4000)
+        self.random_blink_timer.timeout.connect(self._start_blink)
+        self.random_blink_timer.start()
+
+        # --- Idle Reminder Timer (5s) ---
+        self.idle_timer = QTimer(self)
+        self.idle_timer.setInterval(10000)
+        self.idle_timer.timeout.connect(self._on_idle_timeout)
+        self.idle_timer.start()
+
+        # --- Bubble Message ---
+        self.bubble_text = ""
+        self.bubble_timer = QTimer(self)
+        self.bubble_timer.setSingleShot(True)
+        self.bubble_timer.timeout.connect(self._hide_bubble)
+
+        self.update_speed()
+
+    def load_skin(self, image_path):
+        if image_path and os.path.isfile(image_path):
+            pixmap = QPixmap(image_path)
+            if not pixmap.isNull():
+                self.skin_pixmap = pixmap.scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                self.update()
+                return True
+        self.skin_pixmap = None
+        self.update()
+        return False
+
+    def update_speed(self):
+        if self.speed_mode == "slow": self.idle_anim.setDuration(3000)
+        elif self.speed_mode == "fast": self.idle_anim.setDuration(800)
+        else: self.idle_anim.setDuration(1500)
+
+    def on_key_pressed(self):
+        self.key_count += 1
+        self.state = "typing"
+        self.idle_timer.start()  # Reset 10s
+
+        if self.bubble_text:
+            self._hide_bubble()
+
+        if self.count_enabled and not self.skin_pixmap:
+            if self.key_count % 2 == 0:
+                self.left_anim.stop(); self.left_anim.start()
+            else:
+                self.right_anim.stop(); self.right_anim.start()
+        self.update()
+
+    def _on_idle_tick(self, value):
+        self.bounce_offset = -math.sin(value * math.pi) * 5.0
+        self.update()
+
+    def _on_left_arm_tick(self, value):
+        self.left_arm_angle = -30 + (value * 45)
+        self.update()
+
+    def _on_right_arm_tick(self, value):
+        self.right_arm_angle = 30 - (value * 45)
+        self.update()
+
+    def _on_idle_timeout(self):
+        self.state = "idle"
+        if self.custom_reminders:
+            import random
+            self.show_bubble(random.choice(self.custom_reminders))
+        self.is_blinking = True
+        self.blink_timer.start(1000)
+
+    def show_bubble(self, text):
+        self.bubble_text = text
+        self.update()
+
+    def _hide_bubble(self):
+        self.bubble_text = ""
+        self.update()
+
+    def _start_blink(self):
+        self.is_blinking = True
+        self.update()
+        self.blink_timer.start(150)
+
+    def _stop_blink(self):
+        self.is_blinking = False
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.translate(60, 60 + self.bounce_offset)
+
+        if self.dark_mode:
+            face_color = QColor(255, 255, 255)
+            board_bg = QColor(40, 40, 40, 200)
+            board_fg = QColor(255, 255, 255)
+        else:
+            face_color = QColor(0, 0, 0)
+            board_bg = QColor(240, 240, 240, 200)
+            board_fg = QColor(0, 0, 0)
+
+        if self.bubble_text:
+            painter.setBrush(QColor(255, 255, 255))
+            painter.setPen(QPen(QColor(200, 200, 200), 1))
+            bubble_rect = QRect(-50, -55, 100, 24)
+            painter.drawRoundedRect(bubble_rect, 10, 10)
+            painter.setPen(QColor(0, 0, 0))
+            painter.drawText(bubble_rect, Qt.AlignmentFlag.AlignCenter, self.bubble_text)
+
+        board_rect = QRect(-25, 25, 50, 18)
+        painter.setBrush(board_bg)
+        painter.setPen(QPen(QColor(100, 100, 100), 1))
+        painter.drawRoundedRect(board_rect, 4, 4)
+        painter.setPen(board_fg)
+        painter.setFont(QFont("Consolas", 8, QFont.Weight.Bold))
+        painter.drawText(board_rect, Qt.AlignmentFlag.AlignCenter, f"{self.key_count} keys")
+
+        if self.skin_pixmap:
+            painter.drawPixmap(-40, -40, self.skin_pixmap)
+            return
+
+        if self.dark_mode:
+            body_color = QColor(255, 193, 7)
+            caramel_color = QColor(141, 110, 99)
+        else:
+            body_color = QColor(255, 213, 79)
+            caramel_color = QColor(121, 85, 72)
+
+        painter.save()
+        painter.translate(-12, 5)
+        painter.rotate(self.left_arm_angle)
+        painter.setBrush(self.arm_color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(-4, 0, 8, 15, 4, 4)
+        painter.restore()
+
+        painter.save()
+        painter.translate(12, 5)
+        painter.rotate(self.right_arm_angle)
+        painter.setBrush(self.arm_color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(-4, 0, 8, 15, 4, 4)
+        painter.restore()
+
+        painter.setBrush(body_color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        path = QPainterPath()
+        path.moveTo(-18, 20)
+        path.lineTo(18, 20)
+        path.lineTo(16, -5)
+        path.cubicTo(10, 0, -10, 0, -16, -5)
+        path.closeSubpath()
+        painter.drawPath(path)
+
+        painter.setBrush(caramel_color)
+        path2 = QPainterPath()
+        path2.moveTo(-16, -5)
+        path2.cubicTo(-10, 0, 10, 0, 16, -5)
+        path2.lineTo(16, -10)
+        path2.lineTo(-16, -10)
+        path2.closeSubpath()
+        painter.drawPath(path2)
+
+        painter.setPen(QPen(face_color, 2))
+        if self.is_blinking:
+            painter.drawLine(-8, 5, -5, 5)
+            painter.drawLine(5, 5, 8, 5)
+        else:
+            painter.setBrush(face_color)
+            painter.drawEllipse(-8, 3, 3, 3)
+            painter.drawEllipse(5, 3, 3, 3)
+
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawArc(-6, 8, 12, 6, 0, -180 * 16)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._is_dragging = False
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_pos is not None:
+            self._is_dragging = True
+            new_pos = event.globalPosition().toPoint() - self._drag_pos
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_pos is not None:
+            settings = QSettings("coding-pudding", "coding-pudding")
+            settings.setValue("mascot_x", self.x())
+            settings.setValue("mascot_y", self.y())
+
+            self._drag_pos = None
+            self._is_dragging = False
+            event.accept()
 
 # ============================================================
 # v11.0: TERMINAL WIDGET (Strict CMD-like)
@@ -2757,11 +2932,11 @@ class BottomPanel(QTabWidget):
         super().__init__(parent_notepad)
         self.parent_notepad = parent_notepad
         self.setDocumentMode(True)
-        
+
         # 1. Tab Output
         self.output_widget = OutputWidget()
         self.addTab(self.output_widget, "OUTPUT")
-        
+
         # 2. Tab Terminal
         self.terminal = TerminalWidget(parent_notepad, dark_mode)
         self.addTab(self.terminal, "TERMINAL")
@@ -2804,11 +2979,6 @@ class MyNotepad(QMainWindow):
         self.recent_files = []
         self.pinned_files = []          # v7.0: pinned/favorite files
 
-        # v7.0: Auto save
-        self.auto_save_enabled = False
-        self.auto_save_interval = 15    # seconds
-        self.auto_save_on_focus_lost = True
-
         self.tabs = []
 
         self._current_toast = None
@@ -2826,14 +2996,14 @@ class MyNotepad(QMainWindow):
         self.splitter.setHandleWidth(6)
         self.splitter.setContentsMargins(8, 8, 8, 8)
         self.splitter.setStyleSheet("QSplitter::handle { background-color: transparent; }")
-        
+
         self.splitter.addWidget(self.tab_widget)
-        
+
         self.bottom_panel = BottomPanel(self, self.dark_mode)
-        self.bottom_panel.hide() 
+        self.bottom_panel.hide()
         self.splitter.addWidget(self.bottom_panel)
-        
-        self.splitter.setSizes([800, 200]) 
+
+        self.splitter.setSizes([800, 200])
 
         self.splitter.setSizes([800, 150])
 
@@ -2855,19 +3025,34 @@ class MyNotepad(QMainWindow):
         self.apply_theme()
         self.load_settings()
 
-        # v7.0: Auto save timers
-        self.auto_save_timer = QTimer()
-        self.auto_save_timer.timeout.connect(self._auto_save_tick)
+        # v14.0: Floating Mascot on MyNotepad
+        self.mascot = PuddingMascot(self, self.dark_mode)
+        mascot_path = resource_path("mascot.png")
+        self.mascot.load_skin(mascot_path)
 
-        self.auto_save_debounce = QTimer()
-        self.auto_save_debounce.setSingleShot(True)
-        self.auto_save_debounce.setInterval(2000)
-        self.auto_save_debounce.timeout.connect(self._auto_save_tick)
-
-        self._apply_auto_save_settings()
+        # v14.0: Mascot settings
+        self.mascot_skin_path = ""
+        self.mascot_speed = "medium"
+        self.mascot_count_enabled = True
+        self.mascot_reminders = ["Return pleasee...", "Go back to your code.."]
+        self.mascot.speed_mode = self.mascot_speed
+        self.mascot.count_enabled = self.mascot_count_enabled
+        self.mascot.custom_reminders = self.mascot_reminders
+        self.mascot.update_speed()
 
         if not self.restore_session():
             self.add_new_tab()
+
+        settings = QSettings("coding-pudding", "coding-pudding")
+        saved_x = settings.value("mascot_x", -1, type=int)
+        saved_y = settings.value("mascot_y", -1, type=int)
+        if saved_x != -1 and saved_y != -1:
+            self.mascot.move(saved_x, saved_y)
+        else:
+            self.mascot.move(self.width() - 140, self.height() - 140)
+
+        self.mascot.show()
+        self.mascot.raise_()
 
         self.update_title()
 
@@ -3209,6 +3394,12 @@ class MyNotepad(QMainWindow):
         self.indent_size = settings.value("indent_size", 4, type=int)
         self.restore_tabs = settings.value("restore_tabs", True, type=bool)
 
+        self.mascot_skin_path = settings.value("mascot_skin_path", "", type=str)
+        self.mascot_speed = settings.value("mascot_speed", "medium", type=str)
+        self.mascot_count_enabled = settings.value("mascot_count_enabled", True, type=bool)
+        reminders = settings.value("mascot_reminders", ["Code đi bro ơi! 😴"], type=list)
+        self.mascot_reminders = reminders if isinstance(reminders, list) else ["Back to your work!!"]
+
         recent = settings.value("recent_files", [])
         if isinstance(recent, str):
             recent = [recent]
@@ -3219,11 +3410,6 @@ class MyNotepad(QMainWindow):
         if isinstance(pinned, str):
             pinned = [pinned]
         self.pinned_files = pinned if isinstance(pinned, list) else []
-
-        # v7.0: Auto save
-        self.auto_save_enabled = settings.value("auto_save_enabled", False, type=bool)
-        self.auto_save_interval = settings.value("auto_save_interval", 30, type=int)
-        self.auto_save_on_focus_lost = settings.value("auto_save_on_focus_lost", True, type=bool)
 
     def save_settings(self):
         settings = QSettings("coding-pudding", "coding-pudding")
@@ -3241,9 +3427,12 @@ class MyNotepad(QMainWindow):
 
         # v7.0
         settings.setValue("pinned_files", self.pinned_files)
-        settings.setValue("auto_save_enabled", self.auto_save_enabled)
-        settings.setValue("auto_save_interval", self.auto_save_interval)
-        settings.setValue("auto_save_on_focus_lost", self.auto_save_on_focus_lost)
+
+        # v14.0
+        settings.setValue("mascot_skin_path", self.mascot_skin_path)
+        settings.setValue("mascot_speed", self.mascot_speed)
+        settings.setValue("mascot_count_enabled", self.mascot_count_enabled)
+        settings.setValue("mascot_reminders", self.mascot_reminders)
 
     def current_editor(self):
         return self.tab_widget.currentWidget()
@@ -3281,6 +3470,10 @@ class MyNotepad(QMainWindow):
         editor.cursorPositionChanged.connect(self.update_cursor_position)
         editor.textChanged.connect(self.on_text_changed)
 
+        # v14.0: Connecting Editor with Mascot
+        if hasattr(self, 'mascot') and self.mascot:
+            editor.on_key_pressed_callback = self.mascot.on_key_pressed
+
         tab = EditorTab(editor, file_path, False)
         tab.encoding = encoding
 
@@ -3311,10 +3504,6 @@ class MyNotepad(QMainWindow):
         return tab
 
     def on_tab_changed(self, index):
-        # v7.0: Auto-save when switching tabs
-        if self.auto_save_enabled and self.auto_save_on_focus_lost:
-            self._auto_save_tick()
-
         if 0 <= index < len(self.tabs):
             self.update_cursor_position()
             self.update_title()
@@ -3418,62 +3607,6 @@ class MyNotepad(QMainWindow):
         else:
             self.status_bar.showMessage(f"Saved {saved} files", 2000)
             self.show_toast(f"Saved {saved} files", kind='success')
-
-    # ============ v7.0: AUTO SAVE ============
-    def _apply_auto_save_settings(self):
-        """Turn on/off auto-save timer"""
-        if self.auto_save_enabled:
-            self.auto_save_timer.start(self.auto_save_interval * 1000)
-        else:
-            self.auto_save_timer.stop()
-            self.auto_save_debounce.stop()
-
-    def _auto_save_tick(self):
-        """Save all tabs that have path and is being modified"""
-        saved = 0
-        for i, tab in enumerate(self.tabs):
-            if not tab.is_modified or not tab.file_path:
-                continue
-            try:
-                content = tab.editor.toPlainText()
-                content = self._normalize_line_ending(content, tab.line_ending)
-                with open(tab.file_path, 'w', encoding=tab.encoding, newline='') as f:
-                    f.write(content)
-                tab.is_modified = False
-                tab.original_content = content
-                self.update_tab_title(i)
-                self.save_bookmarks_for(tab.file_path, tab.editor.bookmarks)
-                saved += 1
-            except Exception:
-                pass
-
-        if saved > 0:
-            self.update_title()
-            self.status_bar.showMessage(f"Auto-saved {saved} file(s)", 1500)
-            self.show_toast(f"Auto-saved {saved} file(s)", 3000, kind='success')
-
-    def _on_editor_text_changed(self):
-        """Reset debounce timer once per press"""
-        if self.auto_save_enabled:
-            self.auto_save_debounce.start()
-
-        # v12.0: Scanning for errors after 1 second (stop typing)
-        if not hasattr(self, 'diag_timer'):
-            self.diag_timer = QTimer()
-            self.diag_timer.setSingleShot(True)
-            self.diag_timer.setInterval(1000)
-            self.diag_timer.timeout.connect(self._update_diagnostics)
-        
-        self.diag_timer.start()
-
-    def changeEvent(self, event):
-        """Auto-save when the window is out of focus mode"""
-        if event.type() == event.Type.ActivationChange:
-            if (not self.isActiveWindow()
-                    and self.auto_save_enabled
-                    and self.auto_save_on_focus_lost):
-                self._auto_save_tick()
-        super().changeEvent(event)
 
     def reload_all_tabs(self):
         tabs_with_path = [t for t in self.tabs if t.file_path]
@@ -4242,9 +4375,6 @@ class MyNotepad(QMainWindow):
             self.update_tab_title()
             self.update_title()
 
-        # v7.0: Reset auto-save debounce
-        self._on_editor_text_changed()
-
     def _update_diagnostics(self):
         tab = self.current_tab()
         if not tab or not tab.editor:
@@ -4252,21 +4382,21 @@ class MyNotepad(QMainWindow):
 
         text = tab.editor.toPlainText()
         lines = text.split('\n')
-        
+
         self.current_todo_list = []
         self.current_fixme_list = []
-        
+
         errors = 0
         warnings = 0
 
         for i, line in enumerate(lines):
             line_num = i + 1
-            
+
             # TODO
             if "TODO" in line:
                 self.current_todo_list.append({'line': line_num, 'content': line.strip()})
                 warnings += 1
-                
+
             # FIXME
             if "FIXME" in line:
                 self.current_fixme_list.append({'line': line_num, 'content': line.strip()})
@@ -4282,7 +4412,7 @@ class MyNotepad(QMainWindow):
         if not self.current_todo_list and not self.current_fixme_list:
             QMessageBox.information(self, "Problems", "No TODO or FIXME found.")
             return
-            
+
         dialog = ProblemsDialog(self, self.current_todo_list, self.current_fixme_list, self.current_editor())
         dialog.exec()
 
@@ -4306,39 +4436,7 @@ class MyNotepad(QMainWindow):
 
     # ============ v6.0: NOTIFICATION ============
     def show_toast(self, message, duration=5000, kind='info'):
-        """
-        Show notifications.
-
-        - Windows: use Win32 Balloon Tip (universal XP --> 11)
-          On Windows 10 or 11, Windows auto-convert to modern toast.
-        - Other OSes: fallback customed in-app toast.
-
-        Args:
-            message: Notifying context
-            duration: Showing duration (ms)
-            kind: 'info' | 'success' | 'warning' | 'error'
-        """
-        # v13.0: Push notification to OUTPUT
-        if hasattr(self, 'bottom_panel'):
-            is_err = (kind == 'error')
-            if "Auto-saved" not in message:
-                self.bottom_panel.output_widget.log(message, is_err)
-
-        balloon_kind = kind if kind in ('info', 'warning', 'error') else 'info'
-
-        if sys.platform == 'win32':
-            timeout_sec = max(5, min(30, duration // 1000))
-            ok = show_balloon_tip(
-                title=APP_DISPLAY_NAME,
-                message=message,
-                timeout=timeout_sec,
-                kind=balloon_kind,
-            )
-            if ok:
-                return
-
-        # Fallback: in-app customed toasts
-        self._show_inapp_toast(message, duration, kind)
+        pass
 
     def _show_inapp_toast(self, message, duration=5000, kind='info'):
         """Customed toasts (fallback) - child widget"""
@@ -4968,7 +5066,7 @@ class MyNotepad(QMainWindow):
             "<h2>coding-pudding.exe</h2>"
             "<p>Lightweight Python editor for weak PCs</p>"
             "<p><b>Version:</b> 13.0</p>"
-            "<p><b>License:</b> GPL v3.0</p>")
+            "<p><b>License:</b> GPL v14.0</p>")
 
     def toggle_dark_mode(self, checked):
         self.dark_mode = checked
@@ -5232,6 +5330,27 @@ class MyNotepad(QMainWindow):
                 "The following files are not supported:\n\n" + "\n".join(errors)
             )
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'mascot') and self.mascot:
+            settings = QSettings("coding-pudding", "coding-pudding")
+            saved_x = settings.value("mascot_x", -1, type=int)
+            if saved_x == -1:
+                self.mascot.move(self.width() - 140, self.height() - 140)
+
+    def apply_mascot_settings(self):
+        if hasattr(self, 'mascot') and self.mascot:
+            self.mascot.speed_mode = self.mascot_speed
+            self.mascot.update_speed()
+            self.mascot.count_enabled = self.mascot_count_enabled
+            self.mascot.custom_reminders = self.mascot_reminders
+
+            if self.mascot_skin_path and os.path.isfile(self.mascot_skin_path):
+                self.mascot.load_skin(self.mascot_skin_path)
+            else:
+                self.mascot.skin_pixmap = None
+                self.mascot.update()
+
 # ============================================================
 # v10.0: SEARCH IN FILES - DIALOG 1 (INPUT)
 # ============================================================
@@ -5492,31 +5611,31 @@ class ProblemsDialog(QDialog):
         super().__init__(parent_notepad)
         self.parent_notepad = parent_notepad
         self.editor = editor
-        
+
         self.setWindowTitle("Problems")
         self.setFixedSize(700, 450)
         self.setModal(False)
-        
+
         layout = QVBoxLayout()
-        
+
         self.tabs = QTabWidget()
-        
+
         # Tab TODO
         self.todo_table = self._create_table(todo_list)
         self.tabs.addTab(self.todo_table, f"TODO ({len(todo_list)})")
-        
+
         # Tab FIXME
         self.fixme_table = self._create_table(fixme_list)
         self.tabs.addTab(self.fixme_table, f"FIXME ({len(fixme_list)})")
-        
+
         layout.addWidget(self.tabs)
-        
+
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignRight)
-        
+
         self.setLayout(layout)
-        
+
     def _create_table(self, items):
         table = QTableWidget()
         table.setColumnCount(3)
@@ -5526,40 +5645,40 @@ class ProblemsDialog(QDialog):
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
-        
+
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         table.setColumnWidth(0, 40)
         table.setColumnWidth(1, 60)
-        
+
         table.setRowCount(len(items))
         for row, item in enumerate(items):
             item_num = QTableWidgetItem(str(row + 1))
             item_num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, 0, item_num)
-            
+
             item_line = QTableWidgetItem(str(item['line']))
             item_line.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, 1, item_line)
-            
+
             content = item['content']
             if len(content) > 80:
                 content = content[:77] + "..."
             table.setItem(row, 2, QTableWidgetItem(content))
-            
+
         table.cellClicked.connect(self._on_click)
         table.doubleClicked.connect(self._on_double_click)
         return table
-        
+
     def _on_click(self, row, col):
         current_table = self.tabs.currentWidget()
         item = current_table.item(row, 1) # Lấy cột Line
         if item:
             line_num = int(item.text())
             self.editor._goto_line(line_num)
-            
+
     def _on_double_click(self, index):
         self._on_click(index.row(), index.column())
         self.close()
