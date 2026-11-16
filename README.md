@@ -33,7 +33,7 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/notification.PNG" width="45%" />
+  <img src="screenshots/sticky.PNG" width="45%" />
   <img src="screenshots/terminal.PNG" width="45%" />
 </p>
 
@@ -43,7 +43,8 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/sticky.PNG" width="45%" />
+  <img src="screenshots/mascot.PNG" width="45%" />
+  <img src="screenshots/settings_mascot.PNG" width="45%" />
 </p>
 
 ---
@@ -54,9 +55,7 @@
 - **Search in Files** — Search for any string across your entire project with instant jump-to-line and filtering.
 - **Encoding conversion** — Change file encoding between UTF-8, UTF-8 BOM, UTF-16 LE/BE, UTF-16, and ANSI (Windows-1252).
 - **Line ending conversion** — Switch line endings between Windows (CRLF), Unix (LF), and Macintosh (CR).
-- **Auto save** — Automatically save modified files at a configurable interval. Also saves when switching tabs or losing focus.
 - **Pin/Unpin favorite recent files** — Pin important files to the top of the `Open Recent` menu.
-- **Desktop notifications** — Toast notifications appear at the bottom-right of the screen with the app icon and name.
 - **Current line highlight** — The line containing the cursor is highlighted with a subtle background color.
 - **Middle-click close tab** — Middle-click any tab to close it (Chrome-style).
 - **Dark mode** — Protect your eyes during long coding sessions.
@@ -81,8 +80,10 @@
 - **Convert indentation** — Convert leading whitespace between tabs and spaces.
 - **Integrated Terminal** — Built-in terminal with command history (Up/Down arrows).
 - **Problems Panel** — Click the error/warning count on the status bar to view a list of all `TODO` and `FIXME` comments, with instant jump-to-line.
-- * **Sticky Scroll** — Automatically pins the current `class` / `def` declarations to the top of the editor while scrolling, keeping you in context. Click the header to jump back to the declaration.
-- * **Go to End of Scope** — Instantly jump to the end of the innermost function or class you are currently inside.
+- **Sticky Scroll** — Automatically pins the current `class` / `def` declarations to the top of the editor while scrolling, keeping you in context. Click the header to jump back to the declaration.
+- **Go to End of Scope** — Instantly jump to the end of the innermost function or class you are currently inside.
+- **Interactive Mascot** — A cute floating mascot that dances 24/7, counts your keystrokes, and reminds you to code if you're idle for 10 seconds.
+- **Mascot Customization** — Change the mascot's skin (upload a PNG), speed, toggle key counting, and write your own reminder messages.
 
 ---
 
@@ -246,21 +247,6 @@ Pinned files will not be duplicated in the `Recent` list
 - **MIDDLE-CLICK** on the `X` button --> closes the tab.
 - **MIDDLE-CLICK** + drag to another tab --> no tab is closed.
 
-### Desktop notifications
-The app shows **TOAST NOTIFICATION** at the bottom-right of the screen for events, such as:
-- Saving files
-- Reloading files
-- Converting indentation (tabs <--> spaces)
-- Auto-saving
-- Pinning / unpinning recent files
-- Copying file path / file name
-
-On Windows 10/11, the system automatically converts the balloon tip into a modern toast notification.
-
-App identity registration (for the correct app name + icon on the toast):
-- Register: Help --> Register App Identity (Toast).
-- Unregister: Help --> Unregister App Identity.
-
 ### Encoding conversion
 
 The editor supports the following encodings:
@@ -344,20 +330,17 @@ If you're deep inside a 100-line function and want to jump to the end of it:
   * The cursor jumps to the end of the innermost `class` or `def` you are currently in.
   * If you are not inside any block, a status bar message will appear.
 
+### Interactive Mascot
+
+A cute mascot floats on your screen, dancing and reacting to your coding.
+  * **Key Counting:** It counts every character you type and shows it on a small board below it.
+  * **Idle Reminders:** If you don't type for 10 seconds, it shows a bubble reminding you to code.
+  * **Drag & Drop:** Click and hold the mascot to move it anywhere on the window. Its position is saved automatically.
+  * **Customization:** Go to `Settings` (`Ctrl + ,`) -> `Mascot` tab to change its skin (PNG), speed, and reminder messages.
+
 ---
 
 ## Troubleshooting
-
-### Toast notification not showing
-If notifications **NO LONGER** appear after running `coding-pudding` multiple times:
-1. Open **Task Manager** - `taskmgr` (`Ctrl + Shift + Esc`).
-2. Find **Windows Explorer**.
-3. Right-click --> `Restart`.
-
-This clears stale tray icon state left behind by crashed sessions.
-
-### Toast shows "`Python`" instead of "`coding-pudding`"
-This only happens when running from source code (python.exe). The official coding-pudding.exe from **Releases** will fix this problem.
 
 ### Antivirus false positive
 Some antivirus engines (Bkav Pro, Zillya, SecureAge) may flag `coding-pudding.exe` as malware. This is a **false positive** caused by PyInstaller's self-extracting bootloader.
