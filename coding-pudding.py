@@ -1,12 +1,15 @@
 import ast
+import markdown
 import math
-import sys
 import os
 import re
+import sys
 import hashlib
 import ctypes
 import ctypes.wintypes as wintypes
+
 from datetime import datetime
+from pygments.formatters import HtmlFormatter
 
 # Suppress Qt font warnings (OpenType support missing for script 13)
 os.environ["QT_LOGGING_RULES"] = "qt.text.font.db=false"
@@ -20,13 +23,14 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QPlainTextEdit,
                              QListWidgetItem, QAbstractItemView, QTabWidget,
                              QSpinBox, QComboBox, QInputDialog, QTableWidget,
                              QTableWidgetItem, QHeaderView, QTextEdit,
-                             QGraphicsOpacityEffect, QSplitter, QScrollBar, QColorDialog)
+                             QGraphicsOpacityEffect, QSplitter, QScrollBar, QColorDialog,
+                             QTextBrowser)
 from PyQt6.QtCore import (Qt, QTimer, QRect, QPoint, QSettings, QPropertyAnimation,
                           QThread, pyqtSignal, QProcess, QEasingCurve, QVariantAnimation)
 from PyQt6.QtGui import (QFont, QColor, QTextCursor, QKeySequence, QIcon,
                          QTextDocument, QPainter, QTextFormat, QCursor,
                          QTextCharFormat, QFontDatabase, QAction, QPen,
-                         QBrush, QPainterPath, QPixmap)
+                         QBrush, QPainterPath, QPixmap, QFontMetrics)
 
 
 def resource_path(relative_path):
@@ -2459,7 +2463,7 @@ class PuddingMascot(QWidget):
     def __init__(self, parent=None, dark_mode=False):
         super().__init__(parent)
         self.dark_mode = dark_mode
-        self.setFixedSize(120, 120)
+        self.setFixedSize(200, 200)
 
         # --- Config ---
         self.speed_mode = "medium"
@@ -2596,7 +2600,7 @@ class PuddingMascot(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.translate(60, 60 + self.bounce_offset)
+        painter.translate(100, 120 + self.bounce_offset)
 
         if self.dark_mode:
             face_color = QColor(255, 255, 255)
@@ -2608,12 +2612,34 @@ class PuddingMascot(QWidget):
             board_fg = QColor(0, 0, 0)
 
         if self.bubble_text:
+            fm_bubble = QFontMetrics(self.font())
+            max_width = 180
+            text_rect = fm_bubble.boundingRect(
+                QRect(0, 0, max_width, 1000),
+                Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter,
+                self.bubble_text
+            )
+
+            padding_x = 12
+            padding_y = 6
+            bubble_w = text_rect.width() + padding_x * 2
+            bubble_h = text_rect.height() + padding_y * 2
+
+            bubble_x = -bubble_w / 2
+            bubble_y = -55 - bubble_h
+
+            bubble_rect = QRect(int(bubble_x), int(bubble_y), int(bubble_w), int(bubble_h))
+
             painter.setBrush(QColor(255, 255, 255))
             painter.setPen(QPen(QColor(200, 200, 200), 1))
-            bubble_rect = QRect(-50, -55, 100, 24)
-            painter.drawRoundedRect(bubble_rect, 10, 10)
+            painter.drawRoundedRect(bubble_rect, 8, 8)
+
             painter.setPen(QColor(0, 0, 0))
-            painter.drawText(bubble_rect, Qt.AlignmentFlag.AlignCenter, self.bubble_text)
+            painter.drawText(
+                bubble_rect.adjusted(padding_x, padding_y, -padding_x, -padding_y),
+                Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter,
+                self.bubble_text
+            )
 
         board_rect = QRect(-25, 25, 50, 18)
         painter.setBrush(board_bg)
@@ -2951,6 +2977,153 @@ class BottomPanel(QTabWidget):
         self.terminal.toggle_theme(dark_mode)
 
 # ============================================================
+# v15.0: MARKDOWN PREVIEW (Lightweight, Secure)
+# ============================================================
+
+class MarkdownPreview(QWidget):
+    def __init__(self, parent_notepad, dark_mode=False):
+        super().__init__(parent_notepad)
+        self.parent_notepad = parent_notepad
+        self.dark_mode = dark_mode
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # --- Toolbar ---
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(8, 4, 8, 4)
+        
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setFixedSize(80, 24)
+        self.refresh_btn.clicked.connect(self.refresh)
+        toolbar.addWidget(self.refresh_btn)
+        
+        self.auto_refresh_check = QCheckBox("Auto refresh")
+        self.auto_refresh_check.setChecked(True)
+        toolbar.addWidget(self.auto_refresh_check)
+        
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
+
+        # --- Browser ---
+        self.browser = QTextBrowser()
+        self.browser.setOpenExternalLinks(True)
+        layout.addWidget(self.browser)
+
+        # --- Auto-refresh Timer ---
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setSingleShot(True)
+        self.refresh_timer.setInterval(500) # 500ms debounce
+        self.refresh_timer.timeout.connect(self.refresh)
+
+        self.apply_theme()
+
+    def apply_theme(self):
+        if self.dark_mode:
+            self.browser.setStyleSheet("""
+                QTextBrowser {
+                    background-color: #1e1e1e;
+                    color: #d4d4d4;
+                    border: none;
+                    padding: 10px;
+                }
+            """)
+        else:
+            self.browser.setStyleSheet("""
+                QTextBrowser {
+                    background-color: #ffffff;
+                    color: #1a1a1a;
+                    border: none;
+                    padding: 10px;
+                }
+            """)
+
+    def on_editor_text_changed(self):
+        if self.auto_refresh_check.isChecked():
+            self.refresh_timer.start()
+
+    def refresh(self):
+        editor = self.parent_notepad.current_editor()
+        if not editor:
+            self.browser.setHtml("<p><i>No content to preview</i></p>")
+            return
+        
+        tab = self.parent_notepad.current_tab()
+        if not tab or not tab.file_path:
+            self.browser.setHtml("<p><i>Preview is only available for saved Markdown files.</i></p>")
+            return
+        
+        ext = os.path.splitext(tab.file_path)[1].lower()
+        if ext not in ('.md', '.markdown', '.mdown', '.mkd'):
+            self.browser.setHtml("<p><i>Preview is only available for Markdown files (.md, .markdown).</i></p>")
+            return
+        
+        text = editor.toPlainText()
+        
+        text = re.sub(r'!\[(.*?)\]\(.*?\)', r'[Image: \1]', text)
+        text = re.sub(r'<img[^>]+>', '', text)
+        
+        try:
+            html = markdown.markdown(
+                text,
+                extensions=[
+                    'fenced_code',
+                    'tables',
+                    'toc',
+                    'nl2br',
+                    'sane_lists',
+                ]
+            )
+        except Exception as e:
+            self.browser.setHtml(f"<p style='color:red;'>Error: {e}</p>")
+            returnowser.setHtml(f"<p style='color:red;'>Error: {e}</p>")
+            return
+
+        if self.dark_mode:
+            pygments_css = HtmlFormatter(style='monokai').get_style_defs('.codehilite')
+            base_css = """
+            <style>
+                body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; 
+                       font-size: 14px; line-height: 1.6; }
+                h1, h2, h3 { border-bottom: 1px solid #3d3d3d; padding-bottom: 0.3em; color: #e0e0e0; }
+                a { color: #4ea1ff; }
+                code { background-color: #2d2d2d; padding: 0.2em 0.4em; border-radius: 3px; color: #e0e0e0; }
+                pre { background-color: #2d2d2d; padding: 12px; border-radius: 6px; overflow: auto; }
+                blockquote { border-left: 4px solid #555; padding-left: 12px; color: #aaa; margin: 0; }
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #3d3d3d; padding: 6px 13px; }
+                th { background-color: #2d2d2d; }
+                img { max-width: 100%; }
+            </style>
+            """
+        else:
+            pygments_css = HtmlFormatter(style='default').get_style_defs('.codehilite')
+            base_css = """
+            <style>
+                body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; 
+                       font-size: 14px; line-height: 1.6; }
+                h1, h2, h3 { border-bottom: 1px solid #e0e0e0; padding-bottom: 0.3em; color: #1a1a1a; }
+                a { color: #0078d4; }
+                code { background-color: #f6f8fa; padding: 0.2em 0.4em; border-radius: 3px; color: #1a1a1a; }
+                pre { background-color: #f6f8fa; padding: 12px; border-radius: 6px; overflow: auto; }
+                blockquote { border-left: 4px solid #dfe2e5; padding-left: 12px; color: #6a737d; margin: 0; }
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #dfe2e5; padding: 6px 13px; }
+                th { background-color: #f6f8fa; }
+                img { max-width: 100%; }
+            </style>
+            """
+        
+        full_html = f"<html><head>{base_css}<style>{pygments_css}</style></head><body>{html}</body></html>"
+        self.browser.setHtml(full_html)
+
+    def toggle_theme(self, dark_mode):
+        self.dark_mode = dark_mode
+        self.apply_theme()
+        self.refresh()
+
+# ============================================================
 # MAIN NOTEPAD
 # ============================================================
 
@@ -3040,6 +3213,9 @@ class MyNotepad(QMainWindow):
         self.mascot.custom_reminders = self.mascot_reminders
         self.mascot.update_speed()
 
+        # v15.0: Markdown previewing
+        self.markdown_preview_visible = False
+
         if not self.restore_session():
             self.add_new_tab()
 
@@ -3049,8 +3225,7 @@ class MyNotepad(QMainWindow):
         if saved_x != -1 and saved_y != -1:
             self.mascot.move(saved_x, saved_y)
         else:
-            self.mascot.move(self.width() - 140, self.height() - 140)
-
+            self.mascot.move(self.width() - 210, self.height() - 210)
         self.mascot.show()
         self.mascot.raise_()
 
@@ -3512,6 +3687,24 @@ class MyNotepad(QMainWindow):
             self._update_line_ending_label()
             # v12.0: Scanning for errors after switching tab
             self._update_diagnostics()
+
+        if hasattr(self, 'md_preview') and self.markdown_preview_visible:
+            tab = self.current_tab()
+            if tab and tab.file_path:
+                ext = os.path.splitext(tab.file_path)[1].lower()
+                if ext not in ('.md', '.markdown', '.mdown', '.mkd'):
+                    self.md_preview.hide()
+                    self.markdown_preview_visible = False
+                    return
+
+            editor = self.current_editor()
+            if editor:
+                try:
+                    editor.textChanged.disconnect(self.md_preview.on_editor_text_changed)
+                except TypeError:
+                    pass
+                editor.textChanged.connect(self.md_preview.on_editor_text_changed)
+            self.md_preview.refresh()
 
     def update_tab_title(self, index=None):
         if index is None:
@@ -4910,6 +5103,12 @@ class MyNotepad(QMainWindow):
         word_count_action.triggered.connect(self.show_word_count)
         view_menu.addAction(word_count_action)
 
+        # v15.0: Markdown previewing
+        md_preview_action = QAction("Markdown Preview", self)
+        md_preview_action.setShortcut("Ctrl+Shift+V")
+        md_preview_action.triggered.connect(self.toggle_markdown_preview)
+        view_menu.addAction(md_preview_action)
+
         view_menu.addSeparator()
 
         bookmarks_menu = view_menu.addMenu("Bookmarks")
@@ -5075,6 +5274,9 @@ class MyNotepad(QMainWindow):
             tab.editor.update_colors()
         self.apply_theme()
         self.bottom_panel.toggle_theme(checked)
+
+        if hasattr(self, 'md_preview'):
+            self.md_preview.toggle_theme(checked)
 
     def delete_text(self):
         editor = self.current_editor()
@@ -5350,6 +5552,31 @@ class MyNotepad(QMainWindow):
             else:
                 self.mascot.skin_pixmap = None
                 self.mascot.update()
+
+    def toggle_markdown_preview(self):
+        if not self.markdown_preview_visible:
+            if not hasattr(self, 'md_preview'):
+                self.md_preview = MarkdownPreview(self, self.dark_mode)
+                self.md_splitter = QSplitter(Qt.Orientation.Horizontal)
+                self.md_splitter.setHandleWidth(4)
+                self.md_splitter.addWidget(self.tab_widget)
+                self.md_splitter.addWidget(self.md_preview)
+                self.md_splitter.setSizes([600, 400])
+                self.setCentralWidget(self.md_splitter)
+                
+                editor = self.current_editor()
+                if editor:
+                    editor.textChanged.connect(self.md_preview.on_editor_text_changed)
+            else:
+                self.md_preview.show()
+                self.md_splitter.setVisible(True)
+            
+            self.md_preview.refresh()
+            self.markdown_preview_visible = True
+        else:
+            if hasattr(self, 'md_preview'):
+                self.md_preview.hide()
+            self.markdown_preview_visible = False
 
 # ============================================================
 # v10.0: SEARCH IN FILES - DIALOG 1 (INPUT)
