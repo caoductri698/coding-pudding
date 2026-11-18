@@ -88,6 +88,7 @@
 - **Go to End of Scope** — Instantly jump to the end of the innermost function or class you are currently inside.
 - **Interactive Mascot** — A cute floating mascot that dances 24/7, counts your keystrokes, and reminds you to code if you're idle for 10 seconds.
 - **Mascot Customization** — Change the mascot's skin (upload a PNG), speed, toggle key counting, and write your own reminder messages.
+  * **Markdown Preview** — Preview `.md` files side-by-side
 
 ---
 
@@ -172,6 +173,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Ctrl + Shift + F` | Search in Files |
 | `Ctrl + ~` | Terminal |
 | `Ctrl + Shift + E` | Go To End of Current Scope (class/def) |
+| `Ctrl + Shift + V` | Toggle Markdown Preview |
 
 ---
 
@@ -341,6 +343,14 @@ A cute mascot floats on your screen, dancing and reacting to your coding.
   * **Idle Reminders:** If you don't type for 10 seconds, it shows a bubble reminding you to code.
   * **Drag & Drop:** Click and hold the mascot to move it anywhere on the window. Its position is saved automatically.
   * **Customization:** Go to `Settings` (`Ctrl + ,`) -> `Mascot` tab to change its skin (PNG), speed, and reminder messages.
+
+### Markdown Preview
+
+- Press `Ctrl + Shift + V` (or go to `View` → `Markdown Preview`).
+- The preview opens side-by-side with your editor.
+- It only works for `.md`, `.markdown`, `.mdown`, and `.mkd` files.
+- Auto-refresh is enabled by default (updates 500ms after you stop typing).
+- Images are replaced with `[Image: alt]` text to keep things lightweight.
 
 ---
 
