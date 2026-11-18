@@ -47,6 +47,10 @@
   <img src="screenshots/settings_mascot.PNG" width="45%" />
 </p>
 
+<p align="center">
+  <img src="screenshots/markdown_preview.PNG" width="45%" />
+</p>
+
 ---
 
 ## Features
