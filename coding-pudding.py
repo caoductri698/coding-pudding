@@ -729,14 +729,15 @@ class CodeEditor(QPlainTextEdit):
         self.update_colors()
 
         self.textChanged.connect(self.update_line_number_area)
-        self.cursorPositionChanged.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
+        self.cursorPositionChanged.connect(self._update_extra_selections)
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area_request)
 
         self.update_line_number_area_width()
         self.update_line_number_area()
         self.highlight_current_line()
+        self._update_extra_selections()
 
         # v13.0: connect text change -> sticky parse
         self.textChanged.connect(self._on_sticky_text_changed)
@@ -794,6 +795,94 @@ class CodeEditor(QPlainTextEdit):
         sel.cursor.clearSelection()
 
         self.setExtraSelections([sel])
+
+    # ============ v16.0: BRACKET MATCHING ============
+    def _update_extra_selections(self):
+        selections = []
+        
+        current_line_sel = QTextEdit.ExtraSelection()
+        current_line_sel.format.setBackground(self._get_current_line_color())
+        current_line_sel.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+        current_line_sel.cursor = self.textCursor()
+        current_line_sel.cursor.clearSelection()
+        selections.append(current_line_sel)
+        
+        cursor = self.textCursor()
+        block = cursor.block()
+        block_text = block.text()
+        pos_in_block = cursor.positionInBlock()
+        
+        brackets = {'(': ')', '[': ']', '{': '}', '<': '>'}
+        reverse_brackets = {v: k for k, v in brackets.items()}
+        
+        if self.dark_mode:
+            match_bg = QColor(80, 100, 140, 150)
+            match_fg = QColor(255, 255, 255)
+        else:
+            match_bg = QColor(180, 210, 240, 150)
+            match_fg = QColor(0, 0, 0)
+        
+        def add_highlight(char_pos):
+            sel = QTextEdit.ExtraSelection()
+            sel.format.setBackground(match_bg)
+            sel.format.setForeground(match_fg)
+            sel.format.setFontWeight(QFont.Weight.Bold)
+            
+            c = self.textCursor()
+            c.setPosition(char_pos)
+            c.setPosition(char_pos + 1, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = c
+            selections.append(sel)
+        
+        if pos_in_block > 0:
+            left_char = block_text[pos_in_block - 1]
+            if left_char in brackets or left_char in reverse_brackets:
+                left_pos = block.position() + pos_in_block - 1
+                add_highlight(left_pos)
+                match_pos = self._find_matching_bracket(left_pos, left_char, brackets, reverse_brackets)
+                if match_pos is not None:
+                    add_highlight(match_pos)
+        
+        if pos_in_block < len(block_text):
+            right_char = block_text[pos_in_block]
+            if right_char in brackets or right_char in reverse_brackets:
+                right_pos = block.position() + pos_in_block
+                add_highlight(right_pos)
+                match_pos = self._find_matching_bracket(right_pos, right_char, brackets, reverse_brackets)
+                if match_pos is not None:
+                    add_highlight(match_pos)
+        
+        self.setExtraSelections(selections)
+    
+    def _find_matching_bracket(self, start_pos, char, brackets, reverse_brackets):
+        text = self.toPlainText()
+        
+        if char in brackets:
+            target = brackets[char]
+            depth = 1
+            i = start_pos + 1
+            while i < len(text):
+                if text[i] == char:
+                    depth += 1
+                elif text[i] == target:
+                    depth -= 1
+                    if depth == 0:
+                        return i
+                i += 1
+        else:
+            target = reverse_brackets[char]
+            depth = 1
+            i = start_pos - 1
+            while i >= 0:
+                if text[i] == char:
+                    depth += 1
+                elif text[i] == target:
+                    depth -= 1
+                    if depth == 0:
+                        return i
+                i -= 1
+        
+        return None
 
     def convert_tabs_to_spaces(self):
         indent_size = self.get_indent_width()
@@ -1052,6 +1141,7 @@ class CodeEditor(QPlainTextEdit):
         self.viewport().update()
         self.line_number_area.update()
         self.highlight_current_line()
+        self._update_extra_selections()
 
     def toggle_dark_mode(self, dark_mode):
         self.dark_mode = dark_mode
@@ -3216,6 +3306,9 @@ class MyNotepad(QMainWindow):
         # v15.0: Markdown previewing
         self.markdown_preview_visible = False
 
+        # v16.0: Zen mode
+        self.zen_mode = None
+
         if not self.restore_session():
             self.add_new_tab()
 
@@ -3256,6 +3349,13 @@ class MyNotepad(QMainWindow):
                 self.drag_tab_index = -1
                 self.tab_widget.tabBar().setCursor(Qt.CursorShape.ArrowCursor)
         return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_F11:
+            self.toggle_zen_mode()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def detach_tab(self, index):
         if index < 0 or index >= len(self.tabs):
@@ -5109,6 +5209,12 @@ class MyNotepad(QMainWindow):
         md_preview_action.triggered.connect(self.toggle_markdown_preview)
         view_menu.addAction(md_preview_action)
 
+        # v16.0: Zen mode
+        zen_action = QAction("Zen Mode", self)
+        zen_action.setShortcut("F11")
+        zen_action.triggered.connect(self.toggle_zen_mode)
+        view_menu.addAction(zen_action)
+
         view_menu.addSeparator()
 
         bookmarks_menu = view_menu.addMenu("Bookmarks")
@@ -5578,6 +5684,31 @@ class MyNotepad(QMainWindow):
                 self.md_preview.hide()
             self.markdown_preview_visible = False
 
+    def toggle_zen_mode(self):
+        self.zen_mode = not self.zen_mode
+        
+        if self.zen_mode:
+            self.menuBar().hide()
+            self.status_bar.hide()
+            self.tab_widget.tabBar().hide()
+            if self.bottom_panel.isVisible():
+                self.bottom_panel.hide()
+                self._zen_bottom_panel_was_visible = True
+            else:
+                self._zen_bottom_panel_was_visible = False
+            if hasattr(self, 'mascot') and self.mascot:
+                self.mascot.hide()
+            self.splitter.setHandleWidth(0)
+        else:
+            self.menuBar().show()
+            self.status_bar.show()
+            self.tab_widget.tabBar().show()
+            if hasattr(self, '_zen_bottom_panel_was_visible') and self._zen_bottom_panel_was_visible:
+                self.bottom_panel.show()
+            if hasattr(self, 'mascot') and self.mascot:
+                self.mascot.show()
+            self.splitter.setHandleWidth(6)
+
 # ============================================================
 # v10.0: SEARCH IN FILES - DIALOG 1 (INPUT)
 # ============================================================
@@ -5660,7 +5791,6 @@ class SearchInFilesInputDialog(QDialog):
             QMessageBox.warning(self, "Search", "Please choose a valid folder.")
             return
 
-        # Lưu params để Dialog 2 sử dụng
         self.search_params = {
             'keyword': keyword,
             'folder': folder,
