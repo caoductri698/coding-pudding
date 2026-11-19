@@ -88,7 +88,9 @@
 - **Go to End of Scope** — Instantly jump to the end of the innermost function or class you are currently inside.
 - **Interactive Mascot** — A cute floating mascot that dances 24/7, counts your keystrokes, and reminds you to code if you're idle for 10 seconds.
 - **Mascot Customization** — Change the mascot's skin (upload a PNG), speed, toggle key counting, and write your own reminder messages.
-  * **Markdown Preview** — Preview `.md` files side-by-side
+- **Markdown Preview** — Preview `.md` files side-by-side
+- **Zen Mode** — Hide all UI elements (menu, status bar, tabs) and focus purely on your code.
+- **Bracket Matching** — When your cursor is next to a bracket `()`, `[]`, `{}`, both the opening and closing brackets are highlighted, making it easy to see nested blocks.
 
 ---
 
@@ -174,6 +176,7 @@ py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data="icon.ico;." -
 | `Ctrl + ~` | Terminal |
 | `Ctrl + Shift + E` | Go To End of Current Scope (class/def) |
 | `Ctrl + Shift + V` | Toggle Markdown Preview |
+| `F11` or `Fn + F11` | Toggle Zen Mode |
 
 ---
 
@@ -351,6 +354,21 @@ A cute mascot floats on your screen, dancing and reacting to your coding.
 - It only works for `.md`, `.markdown`, `.mdown`, and `.mkd` files.
 - Auto-refresh is enabled by default (updates 500ms after you stop typing).
 - Images are replaced with `[Image: alt]` text to keep things lightweight.
+
+### Zen Mode
+
+Focus purely on your code by hiding all UI elements.
+  * **Toggle:** Press `F11` (or go to `View` → `Zen Mode`).
+  * **What's hidden:** Menu bar, status bar, tab bar, bottom panel, and the mascot.
+  * **Exit:** Press `F11` again (or `Esc`).
+  * **Tip:** Great for writing long functions without distractions.
+
+### Bracket Matching
+
+When your cursor is next to a bracket (`(`, `[`, `{`, `<`), the matching bracket is highlighted.
+  * **Auto-detect:** Works for `()`, `[]`, `{}`, `<>`.
+  * **Nested brackets:** Correctly matches nested pairs (e.g., `(([]))`).
+  * **Color-coded:** The highlight color adapts to light/dark mode.
 
 ---
 
